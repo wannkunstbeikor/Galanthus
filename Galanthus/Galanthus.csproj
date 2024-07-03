@@ -2,8 +2,23 @@
 
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
+        <ImplicitUsings>disable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\StreamUtils\StreamUtils.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Include="ThirdParty\libopenssl.cpp" />
+      <None Update="ThirdParty\*.so">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="ThirdParty\*.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+    </ItemGroup>
 
 </Project>
