@@ -5,7 +5,7 @@ public struct TocHeader
     public uint Magic;
     public uint Version;
     public int FileTableDecompressedSize;
-    public int DataFileTableSize;
+    public int TocDataSize;
     public int FileTableCompressedSize;
     public int FirstDataSliceIndex;
     public int DataFileCount;

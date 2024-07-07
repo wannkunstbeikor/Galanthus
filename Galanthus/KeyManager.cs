@@ -1,6 +1,6 @@
 using StreamUtils;
 
-namespace Galanthus.Utils;
+namespace Galanthus;
 
 public static class KeyManager
 {

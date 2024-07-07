@@ -29,14 +29,13 @@ public class SdfToc : IDisposable
         m_settings = inSettings;
     }
 
-    public static unsafe SdfToc? Read(DataStream inStream, CompressionMethod inMethod)
+    public static unsafe SdfToc? Read(DataStream inStream)
     {
         if (inStream.Length < 0x1C)
         {
             return null;
         }
 
-        bool isRocksmith = false;
         TocHeader header = new()
         {
             Magic = inStream.ReadUInt32(),
@@ -59,7 +58,7 @@ public class SdfToc : IDisposable
         if (header.Version == 0x17)
         {
             // compressed/encrypted section with datafile stuff and dds header
-            header.DataFileTableSize = inStream.ReadInt32();
+            header.TocDataSize = inStream.ReadInt32();
         }
 
         header.FileTableCompressedSize = inStream.ReadInt32();
@@ -80,8 +79,9 @@ public class SdfToc : IDisposable
         {
             header.DataSliceIndexConstantsCount = inStream.ReadInt32();
 
-            if (isRocksmith)
+            if (GameManager.CodeName == "ibex")
             {
+                // Rocksmith+ has an extra block of compressed data at the end
                 header.DecompressedSize2 = inStream.ReadUInt32();
                 header.CompressedSize2 = inStream.ReadInt32();
             }
@@ -120,12 +120,12 @@ public class SdfToc : IDisposable
         if (header.Version == 0x17 && header.CompressionType == 3)
         {
             // they compress it fuck my life
-            using Block<byte> weird = new(header.DataFileTableSize);
-            inStream.ReadExactly(weird);
+            using Block<byte> compressedTocData = new(header.TocDataSize);
+            inStream.ReadExactly(compressedTocData);
 
             Block<byte> decomp = new(header.DataFileCount * 0x34 + header.DdsCount * 0xD4);
 
-            Lz4.Decompress(weird, ref decomp);
+            Lz4.Decompress(compressedTocData, ref decomp);
 
             using (BlockStream stream = new(decomp))
             {
@@ -228,7 +228,7 @@ public class SdfToc : IDisposable
         }
 
         Block<byte> fileTable = new(header.FileTableDecompressedSize);
-        switch (inMethod)
+        switch (GameManager.CompressionMethod)
         {
             case CompressionMethod.ZLib:
                 ZLib.Decompress(compressedFileTable, ref fileTable);
@@ -320,13 +320,15 @@ public class SdfToc : IDisposable
             return false;
         }
 
+        // fuck mario rabbids sparks of hope
+        char s = GameManager.Seperator;
         if (locale is null)
         {
-            path = $"sdf-{part}-{inSlice.Index:D4}.sdfdata";
+            path = $"sdf{s}{part}{s}{inSlice.Index:D4}.sdfdata";
         }
         else
         {
-            path = $"sdf-{part}-{inSlice.Index:D4}-{locale}.sdfdata";
+            path = $"sdf{s}{part}{s}{inSlice.Index:D4}{s}{locale}.sdfdata";
         }
 
 
