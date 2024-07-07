@@ -1,35 +1,41 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
-using StreamUtils.Structs;
 
 namespace Galanthus;
 
 public class SdfToc : IDisposable
 {
+    public IEnumerable<File> Files => m_files;
+
     private TocHeader m_header;
     private List<Unk> m_unks;
     private List<Locale> m_locales;
     private List<Block<byte>> m_ddsHeaders;
     private List<File> m_files;
+    private DataSliceIndexSettings m_settings;
 
-    public SdfToc(TocHeader inHeader, List<Unk> inUnks, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles)
+    public SdfToc(TocHeader inHeader, List<Unk> inUnks, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings)
     {
         m_header = inHeader;
         m_unks = inUnks;
         m_locales = inLocales;
         m_ddsHeaders = inDdsHeaders;
         m_files = inFiles;
+        m_settings = inSettings;
     }
 
     public static unsafe SdfToc? Read(DataStream inStream, CompressionMethod inMethod)
     {
-        if (inStream.Length < 0x30)
+        if (inStream.Length < 0x1C)
         {
             return null;
         }
+
         bool isRocksmith = false;
         TocHeader header = new()
         {
@@ -72,7 +78,7 @@ public class SdfToc : IDisposable
 
         if (header.Version >= 0x25)
         {
-            header.UnkCount = inStream.ReadInt32();
+            header.DataSliceIndexConstantsCount = inStream.ReadInt32();
 
             if (isRocksmith)
             {
@@ -106,9 +112,10 @@ public class SdfToc : IDisposable
             inStream.Position += 0x140;
         }
 
-        List<Unk> unks = new(header.UnkCount);
+        List<Unk> unks = new(header.DataSliceIndexConstantsCount);
         List<Locale> locales = new(header.Version >= 0x25 ? 10 : 0);
         List<Block<byte>> ddsHeaders = new(header.DdsCount);
+        DataSliceIndexSettings settings = new();
 
         if (header.Version == 0x17 && header.CompressionType == 3)
         {
@@ -146,9 +153,10 @@ public class SdfToc : IDisposable
         }
         else
         {
-            for (int i = 0; i < header.UnkCount; i++)
+            // related to data files
+            for (int i = 0; i < header.DataSliceIndexConstantsCount; i++)
             {
-                unks.Add(new Unk(inStream));
+                settings.SetValue(inStream.ReadUInt32(), inStream.ReadInt32());
             }
 
             if (header.Version >= 0x25)
@@ -239,7 +247,90 @@ public class SdfToc : IDisposable
         using BlockStream subStream = new(fileTable);
         List<File> files = ParseFileTable(subStream, hasSign);
 
-        return new SdfToc(header, unks, locales, ddsHeaders, files);
+        return new SdfToc(header, unks, locales, ddsHeaders, files, settings);
+    }
+
+    public bool TryGetDataFile(DataSlice inSlice, [NotNullWhen(true)] out string? path)
+    {
+        path = null;
+
+        if (inSlice.Index > m_settings.MaxIndex)
+        {
+            return false;
+        }
+
+        char part;
+        string? locale = null;
+
+        if (inSlice.Index >= m_settings.StartIndexResidentMCacheFiles &&
+            inSlice.Index <= m_settings.EndIndexResidentMCacheFiles)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexResidentMCacheFilesSecondary &&
+                 inSlice.Index <= m_settings.EndIndexResidentMCacheFilesSecondary)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexAlwaysResident &&
+            inSlice.Index <= m_settings.EndIndexAlwaysResident)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexFrontendResident &&
+                 inSlice.Index <= m_settings.EndIndexFrontendResident)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexUnkResident &&
+                 inSlice.Index <= m_settings.EndIndexUnkResident)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexResidentDuringLoadscreen &&
+                 inSlice.Index <= m_settings.EndIndexResidentDuringLoadscreen)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexPartA &&
+                 inSlice.Index <= m_settings.EndIndexPartA)
+        {
+            part = 'A';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexPartB &&
+                 inSlice.Index <= m_settings.EndIndexPartB)
+        {
+            part = 'B';
+        }
+        else if (inSlice.Index >= m_settings.StartIndexPartCLocalizedAudio &&
+                 inSlice.Index <= m_settings.EndIndexPartCLocalizedAudio)
+        {
+            part = 'C';
+            int localIndex = (inSlice.Index - m_settings.StartIndexPartCLocalizedAudio) / m_settings.IndexRangeSizeForPartCLocalizedAudio;
+            locale = m_locales[localIndex].Name;
+        }
+        else if (inSlice.Index >= m_settings.StartIndexDlc &&
+                 inSlice.Index <= m_settings.EndIndexDlc)
+        {
+            part = 'D';
+        }
+        else
+        {
+            Console.WriteLine("Not Implemented Index range");
+            return false;
+        }
+
+        if (locale is null)
+        {
+            path = $"sdf-{part}-{inSlice.Index:D4}.sdfdata";
+        }
+        else
+        {
+            path = $"sdf-{part}-{inSlice.Index:D4}-{locale}.sdfdata";
+        }
+
+
+        return true;
     }
 
     private static List<File> ParseFileTable(DataStream inStream, bool isSigned)
@@ -287,7 +378,7 @@ public class SdfToc : IDisposable
             {
                 Name = name,
                 Hash = hash,
-                Slices = new List<DataSlice>(count),
+                DataSlices = new List<DataSlice>(count),
                 DdsIndex = ddsIndex,
                 Unk = unk
             };
@@ -308,7 +399,7 @@ public class SdfToc : IDisposable
                     compressedSize = decompressedSize;
                 }
 
-                long dataSliceOffset = inStream.ReadSizedInt((sizesAndFlags >> 2) & 7);
+                long offset = inStream.ReadSizedInt((sizesAndFlags >> 2) & 7);
 
                 ushort index = inStream.ReadUInt16();
 
@@ -336,14 +427,14 @@ public class SdfToc : IDisposable
                     sign = inStream.ReadInt32();
                 }
 
-                file.Slices.Add(new DataSlice()
+                file.DataSlices.Add(new DataSlice()
                 {
                     DecompressedSize = decompressedSize,
                     CompressedSize = compressedSize,
                     IsCompressed = isCompressed,
                     IsOodle = ((sizesAndFlags >> 6) & 1) != 0,
                     IsEncrypted = ((sizesAndFlags >> 6) & 1) != 0,
-                    Offset = dataSliceOffset,
+                    Offset = offset,
                     Index = index,
                     PageSizes = pageSizes,
                     Sign = sign,
@@ -362,11 +453,52 @@ public class SdfToc : IDisposable
         }
 
         // pointer to next entry
-        uint offset = inStream.ReadUInt32();
-        Debug.Assert(offset < inStream.Length);
+        uint pNext = inStream.ReadUInt32();
+        Debug.Assert(pNext < inStream.Length);
         ParseEntry(inStream, isSigned, name, files);
-        inStream.Position = offset;
+        inStream.Position = pNext;
         ParseEntry(inStream, isSigned, name, files);
+    }
+
+    public static uint Hash(string inValue, uint inOffset)
+    {
+        if (inValue.Length <= 0)
+        {
+            return 0;
+        }
+
+        uint uVar5 = (uint)(inValue.Length & 3), uVar3 = (uint)(inValue.Length >> 2);
+        for (int i = 0; i < uVar3; i++)
+        {
+            int index = i * 4;
+            ushort uVar2 = (ushort)(inValue[index] | (inValue[index + 1] << 8));
+            ushort puVar1 = (ushort)(inValue[index + 2] | (inValue[index + 3] << 8));
+            uint uVar4 = inOffset + uVar2 ^ (uint)puVar1 << 0xb ^ (inOffset + uVar2) * 0x10000;
+            inOffset = uVar4 + (uVar4 >> 0xb);
+        }
+
+        switch (uVar5)
+        {
+            case 1:
+                uVar5 = inOffset + inValue[^1] ^ (inOffset + inValue[^1]) * 0x400;
+                uVar3 = uVar5 >> 1;
+                break;
+            case 2:
+                uVar5 = inOffset + (uint)(inValue[^2] | (inValue[^1] << 8)) ^ (inOffset + (uint)(inValue[^2] | (inValue[^1] << 8))) * 0x400;
+                uVar3 = uVar5 >> 0x11;
+                break;
+            case 3:
+                uVar5 = inOffset + (uint)(inValue[^3] | (inValue[^2] << 8)) ^ (uint)(inValue[^1] << 0x12) ^ (inOffset + (uint)(inValue[^3] | (inValue[^2] << 8))) * 0x10000;
+                uVar3 = uVar5 >> 0xb;
+                break;
+        }
+        inOffset = uVar5 + uVar3;
+        uVar3 = inOffset ^ inOffset * 8;
+        uVar3 = uVar3 + (uVar3 >> 5);
+        uVar3 = uVar3 ^ uVar3 * 0x10;
+        uVar3 = uVar3 + (uVar3 >> 0x11);
+        uVar3 = uVar3 ^ uVar3 * 0x2000000;
+        return (uVar3 >> 6) + uVar3;
     }
 
     public void Dispose()

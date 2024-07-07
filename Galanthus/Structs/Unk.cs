@@ -1,4 +1,6 @@
-namespace StreamUtils.Structs;
+using StreamUtils;
+
+namespace Galanthus.Structs;
 
 public struct Unk
 {
@@ -8,6 +10,6 @@ public struct Unk
     public Unk(DataStream inStream)
     {
         Hash = inStream.ReadUInt32();
-        Count = inStream.ReadInt32();
+        Count = inStream.ReadInt32(); // dataslice index
     }
 }

@@ -1,4 +1,6 @@
-namespace StreamUtils.Structs;
+using StreamUtils;
+
+namespace Galanthus.Structs;
 
 public struct Tag
 {

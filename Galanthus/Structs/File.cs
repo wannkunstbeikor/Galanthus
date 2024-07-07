@@ -1,4 +1,6 @@
-namespace StreamUtils.Structs;
+using System.Collections.Generic;
+
+namespace Galanthus.Structs;
 
 public struct File()
 {
@@ -6,5 +8,5 @@ public struct File()
     public uint Hash;
     public int DdsIndex;
     public int Unk;
-    public List<DataSlice> Slices = new();
+    public List<DataSlice> DataSlices = new();
 }

@@ -1,4 +1,4 @@
-namespace StreamUtils.Structs;
+namespace Galanthus.Structs;
 
 public struct TocHeader
 {
@@ -11,7 +11,7 @@ public struct TocHeader
     public int DataFileCount;
     public int DdsCount;
     public ushort CompressionType;
-    public int UnkCount;
+    public int DataSliceIndexConstantsCount;
     public uint DecompressedSize2;
     public int CompressedSize2;
     public uint Unk1;

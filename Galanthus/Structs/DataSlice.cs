@@ -1,4 +1,6 @@
-namespace StreamUtils.Structs;
+using System.Collections.Generic;
+
+namespace Galanthus.Structs;
 
 public struct DataSlice
 {
