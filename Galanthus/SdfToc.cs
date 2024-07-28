@@ -320,6 +320,11 @@ public class SdfToc : IDisposable
         {
             part = 'B';
         }
+        else if (inSlice.Index >= m_settings.StartIndexPartC &&
+                 inSlice.Index <= m_settings.EndIndexPartC)
+        {
+            part = 'C';
+        }
         else if (inSlice.Index >= m_settings.StartIndexPartCLocalizedAudio &&
                  inSlice.Index <= m_settings.EndIndexPartCLocalizedAudio)
         {

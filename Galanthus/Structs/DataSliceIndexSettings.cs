@@ -81,6 +81,8 @@ public struct DataSliceIndexSettings
     // C
     public int StartIndexPartCLocalizedAudio = -1;
     public int EndIndexPartCLocalizedAudio = -1;
+    public int StartIndexPartC = 2000;
+    public int EndIndexPartC = 2900;
 
     // D
     public int StartIndexDlc = 3000;
