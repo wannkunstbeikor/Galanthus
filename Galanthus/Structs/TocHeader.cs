@@ -11,7 +11,7 @@ public struct TocHeader
     public int DataFileCount;
     public int DdsCount;
     public ushort CompressionType;
-    public int DataSliceIndexConstantsCount;
+    public int SettingsCount;
     public uint DecompressedSize2;
     public int CompressedSize2;
     public uint Unk1;

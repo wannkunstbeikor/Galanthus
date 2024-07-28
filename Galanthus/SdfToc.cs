@@ -1,7 +1,9 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
 using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
@@ -13,16 +15,14 @@ public class SdfToc : IDisposable
     public IEnumerable<File> Files => m_files;
 
     private TocHeader m_header;
-    private List<Unk> m_unks;
     private List<Locale> m_locales;
     private List<Block<byte>> m_ddsHeaders;
     private List<File> m_files;
     private DataSliceIndexSettings m_settings;
 
-    public SdfToc(TocHeader inHeader, List<Unk> inUnks, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings)
+    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings)
     {
         m_header = inHeader;
-        m_unks = inUnks;
         m_locales = inLocales;
         m_ddsHeaders = inDdsHeaders;
         m_files = inFiles;
@@ -77,7 +77,7 @@ public class SdfToc : IDisposable
 
         if (header.Version >= 0x25)
         {
-            header.DataSliceIndexConstantsCount = inStream.ReadInt32();
+            header.SettingsCount = inStream.ReadInt32();
 
             if (GameManager.CodeName == "ibex")
             {
@@ -86,10 +86,11 @@ public class SdfToc : IDisposable
                 header.CompressedSize2 = inStream.ReadInt32();
             }
 
-            header.Unk1 = inStream.ReadUInt32();
-            header.Unk2 = inStream.ReadUInt32();
-            header.Unk3 = inStream.ReadUInt32();
-            header.Unk4 = inStream.ReadUInt32();
+            // these are not used directly when loading the toc format
+            header.Unk1 = inStream.ReadUInt32(); // maybe some decompressedSize
+            header.Unk2 = inStream.ReadUInt32(); // maybe some compressedSize
+            header.Unk3 = inStream.ReadUInt32(); // looks like 2 int16, but read as int32
+            header.Unk4 = inStream.ReadUInt32(); // looks like 2 int16, but read as int32
         }
 
         // validate start tag
@@ -112,7 +113,6 @@ public class SdfToc : IDisposable
             inStream.Position += 0x140;
         }
 
-        List<Unk> unks = new(header.DataSliceIndexConstantsCount);
         List<Locale> locales = new(header.Version >= 0x25 ? 10 : 0);
         List<Block<byte>> ddsHeaders = new(header.DdsCount);
         DataSliceIndexSettings settings = new();
@@ -153,8 +153,8 @@ public class SdfToc : IDisposable
         }
         else
         {
-            // related to data files
-            for (int i = 0; i < header.DataSliceIndexConstantsCount; i++)
+            // index ranges
+            for (int i = 0; i < header.SettingsCount; i++)
             {
                 settings.SetValue(inStream.ReadUInt32(), inStream.ReadInt32());
             }
@@ -211,19 +211,35 @@ public class SdfToc : IDisposable
             return null;
         }
 
-        if (isEncrypted && compressedFileTable.Size >= 0x100)
+        if (isEncrypted)
         {
             if (KeyManager.Key is null || KeyManager.Iv is null)
             {
                 return null;
             }
 
-            // AES-192-OFB
-            // Problem is c# doesnt have native support for it
-            if (OpenSsl.Decrypt((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
-                    (nuint)KeyManager.Iv.Ptr) != 0)
+            if (header.Version >= 0x29 && compressedFileTable.Size >= 8)
             {
-                return null;
+                // first they use XTEA encryption, then they use des encryption
+                XTEA((uint*)compressedFileTable.Ptr, 32);
+
+                // DES-PCBC
+                // Problem is c# doesnt have native support for it
+                if (OpenSsl.DecryptDes((nuint)compressedFileTable.Ptr, (compressedFileTable.Size >> 3) << 3, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
+                        (nuint)KeyManager.Iv.Ptr) != 0)
+                {
+                    return null;
+                }
+            }
+            else if (compressedFileTable.Size >= 0x100)
+            {
+                // AES-192-OFB
+                // Problem is c# doesnt have native support for it
+                if (OpenSsl.DecryptAes((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
+                        (nuint)KeyManager.Iv.Ptr) != 0)
+                {
+                    return null;
+                }
             }
         }
 
@@ -245,9 +261,11 @@ public class SdfToc : IDisposable
 
         // parse file table
         using BlockStream subStream = new(fileTable);
-        List<File> files = ParseFileTable(subStream, hasSign);
+        List<File> files = ParseFileTable(subStream, hasSign, header.Version);
 
-        return new SdfToc(header, unks, locales, ddsHeaders, files, settings);
+        Console.WriteLine($"Got {files.Count} files.");
+
+        return new SdfToc(header, locales, ddsHeaders, files, settings);
     }
 
     public bool TryGetDataFile(DataSlice inSlice, [NotNullWhen(true)] out string? path)
@@ -314,6 +332,11 @@ public class SdfToc : IDisposable
         {
             part = 'D';
         }
+        else if (inSlice.Index >= m_settings.StartIndexPartEDownloadOnDemand &&
+                 inSlice.Index <= m_settings.EndIndexPartEDownloadOnDemand)
+        {
+            part = 'E';
+        }
         else
         {
             Console.WriteLine("Not Implemented Index range");
@@ -321,7 +344,7 @@ public class SdfToc : IDisposable
         }
 
         // fuck mario rabbids sparks of hope
-        char s = GameManager.Seperator;
+        char s = GameManager.Separator;
         if (locale is null)
         {
             path = $"sdf{s}{part}{s}{inSlice.Index:D4}.sdfdata";
@@ -331,18 +354,17 @@ public class SdfToc : IDisposable
             path = $"sdf{s}{part}{s}{inSlice.Index:D4}{s}{locale}.sdfdata";
         }
 
-
         return true;
     }
 
-    private static List<File> ParseFileTable(DataStream inStream, bool isSigned)
+    private static List<File> ParseFileTable(DataStream inStream, bool isSigned, uint inVersion)
     {
         List<File> retVal = new();
-        ParseEntry(inStream, isSigned, string.Empty, retVal);
+        ParseEntry(inStream, isSigned, string.Empty, retVal, inVersion);
         return retVal;
     }
 
-    private static void ParseEntry(DataStream inStream, bool isSigned, string name, List<File> files)
+    private static void ParseEntry(DataStream inStream, bool isSigned, string name, List<File> files, uint inVersion)
     {
         char id = inStream.ReadChar();
 
@@ -356,151 +378,136 @@ public class SdfToc : IDisposable
             name += inStream.ReadFixedSizedString(id);
 
             // next
-            ParseEntry(inStream, isSigned, name, files);
+            ParseEntry(inStream, isSigned, name, files, inVersion);
 
             return;
         }
 
-        if (id >= 'A' && id <= 'Z')
+        if (id <'A' || id > 'Z')
         {
-            int var = id - 'A';
-            int count = var & 7;
-            int flags = (id >> 3) & 1;
-            if (count <= 0)
+            // pointer to next entry
+            uint pNext = inStream.ReadUInt32();
+            Debug.Assert(pNext < inStream.Length);
+            ParseEntry(inStream, isSigned, name, files, inVersion);
+            inStream.Position = pNext;
+            ParseEntry(inStream, isSigned, name, files, inVersion);
+
+            return;
+        }
+
+        int var = id - 'A';
+        int count = var & (inVersion >= 0x29 ? 15 : 7);
+        int flags = var >> (inVersion >= 0x29 ? 4 : 3);
+        if (count <= 0)
+        {
+            Console.WriteLine($"Empty file {name} id: {id}");
+            return;
+        }
+
+        uint hash = inStream.ReadUInt32(); // not unique
+        byte packedStuff = inStream.ReadByte();
+        int unk = packedStuff >> 2;
+        int ddsIndex = (int)inStream.ReadSizedInt(packedStuff & 3, -1);
+
+        File file = new()
+        {
+            Name = name,
+            Hash = hash,
+            DataSlices = new List<DataSlice>(count),
+            DdsIndex = ddsIndex,
+            Unk = unk
+        };
+
+        for (int i = 0; i < count; i++)
+        {
+            byte sizesAndFlags = inStream.ReadByte();
+            bool isCompressed = (sizesAndFlags >> 5 & 1) != 0;
+            bool isEncrypted = ((sizesAndFlags >> 6) & 1) != 0;
+
+            long decompressedSize = inStream.ReadSizedInt((sizesAndFlags & 3) + 1);
+            byte unk1 = 0;
+            long compressedSize;
+            if (isCompressed)
             {
-                return;
+                int size = (sizesAndFlags & 3) + 1;
+                if (inVersion >= 0x29)
+                {
+                    unk1 = inStream.ReadByte(); // always 2
+                    size = inStream.ReadByte();
+                }
+                compressedSize = inStream.ReadSizedInt(size);
+            }
+            else
+            {
+                compressedSize = decompressedSize;
             }
 
-            uint hash = inStream.ReadUInt32(); // not unique
-            byte packedStuff = inStream.ReadByte();
-            int unk = packedStuff >> 2;
-            int ddsIndex = (int)inStream.ReadSizedInt(packedStuff & 3, -1);
+            long offset = inStream.ReadSizedInt((sizesAndFlags >> 2) & 7);
 
-            File file = new()
+            ushort index = inStream.ReadUInt16();
+
+            List<int>? pageSizes = null;
+            if (isCompressed)
             {
-                Name = name,
-                Hash = hash,
-                DataSlices = new List<DataSlice>(count),
-                DdsIndex = ddsIndex,
-                Unk = unk
-            };
-
-            for (int i = 0; i < count; i++)
-            {
-                byte sizesAndFlags = inStream.ReadByte();
-                bool isCompressed = (sizesAndFlags >> 5 & 1) != 0;
-
-                long decompressedSize = inStream.ReadSizedInt((sizesAndFlags & 3) + 1);
-                long compressedSize;
-                if (isCompressed)
+                long pageCount = (decompressedSize + 0xffff) >> 16;
+                pageSizes = new List<int>((int)pageCount);
+                if (pageCount > 1 && (inVersion < 0x29 || !isEncrypted))
                 {
-                    compressedSize = inStream.ReadSizedInt((sizesAndFlags & 3) + 1);
+                    for (int page = 0; page < pageCount; page++)
+                    {
+                        pageSizes.Add(inStream.ReadUInt16());
+                    }
                 }
                 else
                 {
-                    compressedSize = decompressedSize;
+                    pageSizes.Add((int)compressedSize);
                 }
-
-                long offset = inStream.ReadSizedInt((sizesAndFlags >> 2) & 7);
-
-                ushort index = inStream.ReadUInt16();
-
-                List<int>? pageSizes = null;
-                if (isCompressed)
-                {
-                    long pageCount = (decompressedSize + 0xffff) >> 16;
-                    pageSizes = new List<int>((int)pageCount);
-                    if (pageCount > 1)
-                    {
-                        for (int page = 0; page < pageCount; page++)
-                        {
-                            pageSizes.Add(inStream.ReadUInt16());
-                        }
-                    }
-                    else
-                    {
-                        pageSizes.Add((int)compressedSize);
-                    }
-                }
-
-                int sign = -1;
-                if (isSigned)
-                {
-                    sign = inStream.ReadInt32();
-                }
-
-                file.DataSlices.Add(new DataSlice()
-                {
-                    DecompressedSize = decompressedSize,
-                    CompressedSize = compressedSize,
-                    IsCompressed = isCompressed,
-                    IsOodle = ((sizesAndFlags >> 6) & 1) != 0,
-                    IsEncrypted = ((sizesAndFlags >> 6) & 1) != 0,
-                    Offset = offset,
-                    Index = index,
-                    PageSizes = pageSizes,
-                    Sign = sign,
-                });
             }
 
-            files.Add(file);
-
-            if (flags != 0)
+            int sign = -1;
+            if (isSigned)
             {
-                Debug.Assert(false);
-                byte count2 = inStream.ReadByte();
-                inStream.Position += 2 * count2;
+                sign = inStream.ReadInt32();
             }
-            return;
+
+            file.DataSlices.Add(new DataSlice()
+            {
+                DecompressedSize = decompressedSize,
+                CompressedSize = compressedSize,
+                IsCompressed = isCompressed,
+                IsOodle = (sizesAndFlags >> 7 & 1) != 0,
+                IsEncrypted = isEncrypted,
+                Offset = offset,
+                Index = index,
+                PageSizes = pageSizes,
+                Sign = sign,
+                Unk1 = unk1,
+            });
         }
 
-        // pointer to next entry
-        uint pNext = inStream.ReadUInt32();
-        Debug.Assert(pNext < inStream.Length);
-        ParseEntry(inStream, isSigned, name, files);
-        inStream.Position = pNext;
-        ParseEntry(inStream, isSigned, name, files);
+        files.Add(file);
+
+        if (flags != 0)
+        {
+            Debug.Assert(false, "Havent encountered");
+            byte count2 = inStream.ReadByte();
+            inStream.Position += 2 * count2;
+        }
     }
 
-    public static uint Hash(string inValue, uint inOffset)
+    public static unsafe void XTEA(uint* v, uint numRounds)
     {
-        if (inValue.Length <= 0)
+        uint[] key = [0xb, 0x11, 0x17, 0x1f];
+        uint v0 = v[0], v1 = v[1], delta = 0x9E3779B9, sum = delta * numRounds;
+        for (int i=0; i < numRounds; i++)
         {
-            return 0;
+            v1 -= (((v0 << 4) ^ (v0 >> 5)) + v0) ^ (sum + key[(sum >> 11) & 3]);
+            sum -= delta;
+            v0 -= (((v1 << 4) ^ (v1 >> 5)) + v1) ^ (sum + key[sum & 3]);
         }
 
-        uint uVar5 = (uint)(inValue.Length & 3), uVar3 = (uint)(inValue.Length >> 2);
-        for (int i = 0; i < uVar3; i++)
-        {
-            int index = i * 4;
-            ushort uVar2 = (ushort)(inValue[index] | (inValue[index + 1] << 8));
-            ushort puVar1 = (ushort)(inValue[index + 2] | (inValue[index + 3] << 8));
-            uint uVar4 = inOffset + uVar2 ^ (uint)puVar1 << 0xb ^ (inOffset + uVar2) * 0x10000;
-            inOffset = uVar4 + (uVar4 >> 0xb);
-        }
-
-        switch (uVar5)
-        {
-            case 1:
-                uVar5 = inOffset + inValue[^1] ^ (inOffset + inValue[^1]) * 0x400;
-                uVar3 = uVar5 >> 1;
-                break;
-            case 2:
-                uVar5 = inOffset + (uint)(inValue[^2] | (inValue[^1] << 8)) ^ (inOffset + (uint)(inValue[^2] | (inValue[^1] << 8))) * 0x400;
-                uVar3 = uVar5 >> 0x11;
-                break;
-            case 3:
-                uVar5 = inOffset + (uint)(inValue[^3] | (inValue[^2] << 8)) ^ (uint)(inValue[^1] << 0x12) ^ (inOffset + (uint)(inValue[^3] | (inValue[^2] << 8))) * 0x10000;
-                uVar3 = uVar5 >> 0xb;
-                break;
-        }
-        inOffset = uVar5 + uVar3;
-        uVar3 = inOffset ^ inOffset * 8;
-        uVar3 = uVar3 + (uVar3 >> 5);
-        uVar3 = uVar3 ^ uVar3 * 0x10;
-        uVar3 = uVar3 + (uVar3 >> 0x11);
-        uVar3 = uVar3 ^ uVar3 * 0x2000000;
-        return (uVar3 >> 6) + uVar3;
+        v[0] = v0;
+        v[1] = v1;
     }
 
     public void Dispose()

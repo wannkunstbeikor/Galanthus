@@ -13,4 +13,5 @@ public struct DataSlice
     public ushort Index; // SDF File Index
     public List<int>? PageSizes;
     public int Sign;
+    public byte Unk1;
 }
