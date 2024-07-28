@@ -11,7 +11,7 @@ public partial class ZLib
 
     [LibraryImport(NativeLibName)] internal static partial int compress(nuint dest, nuint destLen, nuint source, nuint sourceLen);
     [LibraryImport(NativeLibName)] internal static partial int uncompress(nuint dst, nuint dstCapacity, nuint source, nuint compressedSize);
-    [LibraryImport(NativeLibName)] internal static partial IntPtr zError(int code);
+    [LibraryImport(NativeLibName)] internal static partial nint zError(int code);
 
     public static unsafe int Decompress<T>(Block<T> inData, ref Block<T> outData) where T : unmanaged
     {

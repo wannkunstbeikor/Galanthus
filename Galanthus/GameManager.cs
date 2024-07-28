@@ -56,7 +56,7 @@ public static class GameManager
         {
             switch (CodeName)
             {
-                case "moira":
+                case "moria":
                     CompressionMethod = CompressionMethod.ZStd;
                     break;
                 case "onward":
