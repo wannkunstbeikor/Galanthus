@@ -36,7 +36,7 @@ internal static class Program
     {
         if (!inGameDirectory.Exists)
         {
-            Console.WriteLine($"Game does not exist at {inGameDirectory.Name}");
+            Console.WriteLine($"Game does not exist at {inGameDirectory.FullName}");
             return;
         }
 
