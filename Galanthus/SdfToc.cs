@@ -185,14 +185,10 @@ public class SdfToc : IDisposable
                 inStream.Position += sizeof(ulong) * header.DataFileCount;
             }
 
-            int ddsHeaderSize = 0x98;
+            int ddsHeaderSize = GameManager.CodeName == "moria" ? 0xCC : 0x98;
             for (int i = 0; i < header.DdsCount; i++)
             {
                 int size = inStream.ReadInt32();
-                if (GameManager.CodeName == "moria")
-                {
-                    ddsHeaderSize = 0xCC;
-                }
                 Block<byte> ddsHeader = new(size);
                 inStream.ReadExactly(ddsHeader);
                 inStream.Position += ddsHeaderSize - sizeof(int) - size; // garbage im guessing (not always null)
