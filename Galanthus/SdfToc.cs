@@ -490,6 +490,7 @@ public class SdfToc : IDisposable
         if (flags != 0)
         {
             Debug.Assert(false, "Havent encountered");
+            Console.WriteLine("Unknown thing");
             byte count2 = inStream.ReadByte();
             inStream.Position += 2 * count2;
         }
