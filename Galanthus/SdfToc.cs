@@ -189,9 +189,8 @@ public class SdfToc : IDisposable
             for (int i = 0; i < header.DdsCount; i++)
             {
                 int size = inStream.ReadInt32();
-                if (size > 0x94 && ddsHeaderSize != 0xCC)
+                if (GameManager.CodeName == "moria")
                 {
-                    // HACK: some games use dx10 dds header, so we need bigger size
                     ddsHeaderSize = 0xCC;
                 }
                 Block<byte> ddsHeader = new(size);
