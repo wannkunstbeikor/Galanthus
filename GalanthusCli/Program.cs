@@ -6,9 +6,9 @@ using StreamUtils;
 
 namespace GalanthusCli;
 
-internal class Program
+internal static class Program
 {
-    static void Main(string[] args)
+    private static int Main(string[] args)
     {
         RootCommand command = new("CLI app to load Games made with the Snowdrop engine.");
 
@@ -28,6 +28,8 @@ internal class Program
         loadCommand.SetHandler(LoadGame, gameArgument, platformOption, keyOption, ivOption);
 
         command.AddCommand(loadCommand);
+
+        return command.InvokeAsync(args).Result;
     }
 
     private static void LoadGame(DirectoryInfo inGameDirectory, string? inPlatform, FileInfo? inKeyFileInfo, FileInfo? inIvFileInfo)
