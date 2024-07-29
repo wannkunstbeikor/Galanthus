@@ -29,11 +29,11 @@ jobs:
       run: |
         set -x
         cd Crypto
-        meson build
+        meson setup build -Dcppflags="-static-libgcc -static-libstdc++"
     - name: Build
       run: |
         cd Crypto/build
-        ninja -static-libgcc -static-libstdc++
+        ninja
     - name: Upload windows
       uses: actions/upload-artifact@v4.3.0
       with: 
