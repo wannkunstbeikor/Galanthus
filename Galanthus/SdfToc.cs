@@ -220,7 +220,7 @@ public class SdfToc : IDisposable
 
                 // DES-PCBC
                 // Problem is c# doesnt have native support for it
-                if (OpenSsl.DecryptDes((nuint)compressedFileTable.Ptr, (compressedFileTable.Size >> 3) << 3, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
+                if (Crypto.DecryptDes((nuint)compressedFileTable.Ptr, (compressedFileTable.Size >> 3) << 3, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
                         (nuint)KeyManager.Iv.Ptr) != 0)
                 {
                     return null;
@@ -230,7 +230,7 @@ public class SdfToc : IDisposable
             {
                 // AES-192-OFB
                 // Problem is c# doesnt have native support for it
-                if (OpenSsl.DecryptAes((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
+                if (Crypto.DecryptAes((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
                         (nuint)KeyManager.Iv.Ptr) != 0)
                 {
                     return null;
