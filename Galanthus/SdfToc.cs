@@ -1,9 +1,7 @@
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Security.Cryptography;
 using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
@@ -315,17 +313,17 @@ public class SdfToc : IDisposable
         {
             part = 'B';
         }
-        else if (inSlice.Index >= m_settings.StartIndexPartC &&
-                 inSlice.Index <= m_settings.EndIndexPartC)
-        {
-            part = 'C';
-        }
         else if (inSlice.Index >= m_settings.StartIndexPartCLocalizedAudio &&
                  inSlice.Index <= m_settings.EndIndexPartCLocalizedAudio)
         {
             part = 'C';
             int localIndex = (inSlice.Index - m_settings.StartIndexPartCLocalizedAudio) / m_settings.IndexRangeSizeForPartCLocalizedAudio;
             locale = m_locales[localIndex].Name;
+        }
+        else if (inSlice.Index >= m_settings.StartIndexPartC &&
+                 inSlice.Index <= m_settings.EndIndexPartC)
+        {
+            part = 'C';
         }
         else if (inSlice.Index >= m_settings.StartIndexDlc &&
                  inSlice.Index <= m_settings.EndIndexDlc)
