@@ -24,7 +24,7 @@ jobs:
       run: |
         set -x
         pacman -S --needed --noconfirm pactoys
-        pacboy -S --needed --noconfirm openssl meson gcc
+        pacboy -S --needed --noconfirm openssl:p meson:p gcc:p 
     - name: Configure
       run: |
         set -x
