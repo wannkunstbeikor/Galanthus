@@ -33,7 +33,7 @@ jobs:
     - name: Build
       run: |
         cd Crypto/build
-        ninja
+        ninja -static-libgcc -static-libstdc++
     - name: Upload windows
       uses: actions/upload-artifact@v4.3.0
       with: 
