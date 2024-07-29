@@ -4,7 +4,7 @@ project('Crypto', 'cpp',
 
 lib = shared_library('crypto',
            'lib.cpp',
-           dependencies: dependency('openssl', modules: ['crypto']))
+           dependencies: dependency('openssl', modules: ['crypto'], static: true))
 
 custom_target('final binary',
           depends : lib,
