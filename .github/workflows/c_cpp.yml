@@ -24,12 +24,12 @@ jobs:
       run: |
         set -x
         pacman -S --needed --noconfirm pactoys
-        pacboy -S --needed --noconfirm openssl meson gcc
+        pacboy -S --needed --noconfirm openssl:p meson:p clang:p 
     - name: Configure
       run: |
         set -x
         cd Crypto
-        meson build
+        CC=clang CXX=clang++ meson setup build
     - name: Build
       run: |
         cd Crypto/build
