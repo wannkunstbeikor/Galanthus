@@ -12,7 +12,6 @@
     </ItemGroup>
 
     <ItemGroup>
-      <None Include="ThirdParty\libopenssl.cpp" />
       <None Update="ThirdParty\*.so">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
