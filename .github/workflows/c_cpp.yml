@@ -29,7 +29,7 @@ jobs:
       run: |
         set -x
         cd Crypto
-        meson setup build -Dcpp_args="-static-libgcc -static-libstdc++"
+        CC=clang CXX=clang++ meson setup build
     - name: Build
       run: |
         cd Crypto/build
