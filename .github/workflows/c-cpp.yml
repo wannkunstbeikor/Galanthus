@@ -10,6 +10,9 @@ jobs:
   build:
 
     runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
 
     steps:
     - uses: actions/checkout@v4
@@ -19,10 +22,12 @@ jobs:
         msystem: mingw64
     - name: Install dependencies
       run: |
+        set -x
         pacman -S --needed --noconfirm pactoys
         pacboy -S --needed --noconfirm openssl meson
     - name: Configure
       run: |
+        set -x
         cd Crypto
         meson build
 
