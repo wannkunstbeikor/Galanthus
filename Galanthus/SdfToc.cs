@@ -2,9 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Linq;
 using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
+using File = Galanthus.Structs.File;
 
 namespace Galanthus;
 
@@ -17,14 +20,16 @@ public class SdfToc : IDisposable
     private List<Block<byte>> m_ddsHeaders;
     private List<File> m_files;
     private DataSliceIndexSettings m_settings;
+    private string m_encryptionMethod;
 
-    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings)
+    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings, string inEncryptionMethod)
     {
         m_header = inHeader;
         m_locales = inLocales;
         m_ddsHeaders = inDdsHeaders;
         m_files = inFiles;
         m_settings = inSettings;
+        m_encryptionMethod = inEncryptionMethod;
     }
 
     public static unsafe SdfToc? Read(DataStream inStream)
@@ -204,8 +209,10 @@ public class SdfToc : IDisposable
             return null;
         }
 
+        string encryptionMethod = "None";
         if (isEncrypted)
         {
+
             if (KeyManager.Key is null || KeyManager.Iv is null)
             {
                 return null;
@@ -213,6 +220,7 @@ public class SdfToc : IDisposable
 
             if (header.Version >= 0x29 && compressedFileTable.Size >= 8)
             {
+                encryptionMethod = "XTEA+DES";
                 // first they use XTEA encryption, then they use des encryption
                 XTEA((uint*)compressedFileTable.Ptr, 32);
 
@@ -226,6 +234,7 @@ public class SdfToc : IDisposable
             }
             else if (compressedFileTable.Size >= 0x100)
             {
+                encryptionMethod = "AES";
                 // AES-192-OFB
                 // Problem is c# doesnt have native support for it
                 if (Crypto.DecryptAes((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
@@ -258,7 +267,7 @@ public class SdfToc : IDisposable
 
         Console.WriteLine($"Got {files.Count} files.");
 
-        return new SdfToc(header, locales, ddsHeaders, files, settings);
+        return new SdfToc(header, locales, ddsHeaders, files, settings, encryptionMethod);
     }
 
     public bool TryGetDataFile(DataSlice inSlice, [NotNullWhen(true)] out string? path)
@@ -515,5 +524,98 @@ public class SdfToc : IDisposable
         {
             header.Dispose();
         }
+    }
+
+    public unsafe Byte[] GetFileBytes(SdfToc toc, Structs.File fileEntry, string dataDir)
+    {
+        List<Byte[]> fileData = new List<Byte[]>();
+        string sdfPath = null;
+
+        //add dds header
+        fileData.Add(toc.m_ddsHeaders[fileEntry.DdsIndex].ToArray());
+
+        //read slices 
+        foreach (DataSlice dataSlice in fileEntry.DataSlices)
+        {
+            if (!TryGetDataFile(dataSlice, out string? sdfName))
+            {
+                Console.WriteLine($"Wrong index {dataSlice.Index}");
+                continue;
+            }
+
+            sdfPath = Path.Combine(dataDir, sdfName);
+
+            using (DataStream stream = BlockStream.FromFile(sdfPath))
+            {
+                //read slice
+                stream.Position = dataSlice.Offset;
+                Block<Byte> data = new((int)dataSlice.CompressedSize);
+                stream.ReadExactly(data);
+
+                //decrypt slice
+                if (dataSlice.IsEncrypted)
+                {
+                    if (toc.m_encryptionMethod == "XTEA+DES")
+                    {
+                        // first they use XTEA encryption, then they use des encryption
+                        XTEA((uint*)data.Ptr, 32);
+
+                        // DES-PCBC
+                        // Problem is c# doesnt have native support for it
+                        if (Crypto.DecryptDes((nuint)data.Ptr, (data.Size >> 3) << 3, (nuint)data.Ptr, (nuint)KeyManager.Key.Ptr,
+                                (nuint)KeyManager.Iv.Ptr) != 0)
+                        {
+                            return null;
+                        }
+                    }
+                    else if (toc.m_encryptionMethod == "AES")
+                    {
+                        // AES-192-OFB
+                        // Problem is c# doesnt have native support for it
+                        if (Crypto.DecryptAes((nuint)data.Ptr, 0x100, (nuint)data.Ptr, (nuint)KeyManager.Key.Ptr,
+                                (nuint)KeyManager.Iv.Ptr) != 0)
+                        {
+                            return null;
+                        }
+                    }
+                }
+
+                //decompress slice
+                if (dataSlice.IsCompressed)
+                {
+                    if (!dataSlice.IsOodle)
+                    {
+                        Block<byte> decompressedData = new((int)dataSlice.DecompressedSize);
+                        ZStd.Decompress(data, ref decompressedData);
+
+                        data = decompressedData;
+                    }
+                    else
+                    {
+                        Console.WriteLine("Oodle slice!");
+                    }
+                }
+
+                //add slice to list
+                fileData.Add(data.ToArray());
+            }
+        }
+
+        return CombineByteArray(fileData.ToArray());
+    }
+
+    public static byte[] CombineByteArray(params byte[][] arrays)
+    {
+        //
+        //from https://github.com/KillzXGaming/Switch-Toolbox/blob/master/Switch_Toolbox_Library/Util/Util.cs#L155
+        //
+        byte[] rv = new byte[arrays.Sum(a => a.Length)];
+        int offset = 0;
+        foreach (byte[] array in arrays)
+        {
+            Buffer.BlockCopy(array, 0, rv, offset, array.Length);
+            offset += array.Length;
+        }
+        return rv;
     }
 }
