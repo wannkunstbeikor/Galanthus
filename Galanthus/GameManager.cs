@@ -133,7 +133,7 @@ public static class GameManager
     public static Byte[] TryGetFileBytes(string filePath, string inDirectory)
     {
         string dataDir = Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data");
-        Byte[] data = null;
+        Block<byte> data = null;
         if (filePath != null)
         {
             foreach (Structs.File file in m_toc.Files)
@@ -145,6 +145,6 @@ public static class GameManager
                 }
             }
         }
-        return data;
+        return data.ToArray();
     }
 }

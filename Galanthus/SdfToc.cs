@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
 using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
@@ -20,16 +19,14 @@ public class SdfToc : IDisposable
     private List<Block<byte>> m_ddsHeaders;
     private List<File> m_files;
     private DataSliceIndexSettings m_settings;
-    private string m_encryptionMethod;
 
-    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings, string inEncryptionMethod)
+    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings)
     {
         m_header = inHeader;
         m_locales = inLocales;
         m_ddsHeaders = inDdsHeaders;
         m_files = inFiles;
         m_settings = inSettings;
-        m_encryptionMethod = inEncryptionMethod;
     }
 
     public static unsafe SdfToc? Read(DataStream inStream)
@@ -209,7 +206,6 @@ public class SdfToc : IDisposable
             return null;
         }
 
-        string encryptionMethod = "None";
         if (isEncrypted)
         {
 
@@ -220,7 +216,6 @@ public class SdfToc : IDisposable
 
             if (header.Version >= 0x29 && compressedFileTable.Size >= 8)
             {
-                encryptionMethod = "XTEA+DES";
                 // first they use XTEA encryption, then they use des encryption
                 XTEA((uint*)compressedFileTable.Ptr, 32);
 
@@ -234,7 +229,6 @@ public class SdfToc : IDisposable
             }
             else if (compressedFileTable.Size >= 0x100)
             {
-                encryptionMethod = "AES";
                 // AES-192-OFB
                 // Problem is c# doesnt have native support for it
                 if (Crypto.DecryptAes((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
@@ -267,7 +261,7 @@ public class SdfToc : IDisposable
 
         Console.WriteLine($"Got {files.Count} files.");
 
-        return new SdfToc(header, locales, ddsHeaders, files, settings, encryptionMethod);
+        return new SdfToc(header, locales, ddsHeaders, files, settings);
     }
 
     public bool TryGetDataFile(DataSlice inSlice, [NotNullWhen(true)] out string? path)
@@ -526,14 +520,42 @@ public class SdfToc : IDisposable
         }
     }
 
-    public unsafe Byte[] GetFileBytes(SdfToc toc, Structs.File fileEntry, string dataDir)
+    public unsafe Block<Byte> GetFileBytes(SdfToc toc, File fileEntry, string dataDir)
     {
-        List<Byte[]> fileData = new List<Byte[]>();
+        int outBufferSize = 0;
         string sdfPath = null;
 
-        //add dds header
-        fileData.Add(toc.m_ddsHeaders[fileEntry.DdsIndex].ToArray());
+        //get final file size
+        foreach (DataSlice dataSlice in fileEntry.DataSlices)
+        {
+            if (fileEntry.DdsIndex != -1)
+            {
+                outBufferSize += m_ddsHeaders[fileEntry.DdsIndex].Size;
+            }
 
+            if (!TryGetDataFile(dataSlice, out string? sdfName))
+            {
+                Console.WriteLine($"Wrong index {dataSlice.Index}");
+                continue;
+            }
+
+            sdfPath = Path.Combine(dataDir, sdfName);
+            if (System.IO.File.Exists(sdfPath))
+            {
+                outBufferSize += (int)dataSlice.DecompressedSize;
+            }
+                
+        }
+        Block<Byte> outBuffer = new(outBufferSize);
+
+
+        //add dds header
+        if (fileEntry.DdsIndex != -1)
+        {
+            m_ddsHeaders[fileEntry.DdsIndex].CopyTo(outBuffer);
+            outBuffer.Shift(m_ddsHeaders[fileEntry.DdsIndex].Size);
+        }
+        
         //read slices 
         foreach (DataSlice dataSlice in fileEntry.DataSlices)
         {
@@ -544,78 +566,70 @@ public class SdfToc : IDisposable
             }
 
             sdfPath = Path.Combine(dataDir, sdfName);
-
-            using (DataStream stream = BlockStream.FromFile(sdfPath))
+            if (System.IO.File.Exists(sdfPath))
             {
-                //read slice
-                stream.Position = dataSlice.Offset;
-                Block<Byte> data = new((int)dataSlice.CompressedSize);
-                stream.ReadExactly(data);
-
-                //decrypt slice
-                if (dataSlice.IsEncrypted)
+                using (DataStream stream = BlockStream.FromFile(sdfPath))
                 {
-                    if (toc.m_encryptionMethod == "XTEA+DES")
-                    {
-                        // first they use XTEA encryption, then they use des encryption
-                        XTEA((uint*)data.Ptr, 32);
+                    //read slice
+                    stream.Position = dataSlice.Offset;
+                    Block<Byte> compressedBuffer = new((int)dataSlice.CompressedSize);
+                    stream.ReadExactly(compressedBuffer);
 
-                        // DES-PCBC
-                        // Problem is c# doesnt have native support for it
-                        if (Crypto.DecryptDes((nuint)data.Ptr, (data.Size >> 3) << 3, (nuint)data.Ptr, (nuint)KeyManager.Key.Ptr,
-                                (nuint)KeyManager.Iv.Ptr) != 0)
+                    //decrypt slice
+                    if (dataSlice.IsEncrypted)
+                    {
+                        if (m_header.Version >= 0x29 && compressedBuffer.Size >= 8)
                         {
-                            return null;
+                            // first they use XTEA encryption, then they use des encryption
+                            XTEA((uint*)compressedBuffer.Ptr, 32);
+
+                            // DES-PCBC
+                            // Problem is c# doesnt have native support for it
+                            if (Crypto.DecryptDes((nuint)compressedBuffer.Ptr, (compressedBuffer.Size >> 3) << 3, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
+                                    (nuint)KeyManager.Iv.Ptr) != 0)
+                            {
+                                return null;
+                            }
+                        }
+                        else if (compressedBuffer.Size >= 0x100)
+                        {
+                            // AES-192-OFB
+                            // Problem is c# doesnt have native support for it
+                            if (Crypto.DecryptAes((nuint)compressedBuffer.Ptr, 0x100, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
+                                    (nuint)KeyManager.Iv.Ptr) != 0)
+                            {
+                                return null;
+                            }
                         }
                     }
-                    else if (toc.m_encryptionMethod == "AES")
+
+                    //decompress slice
+                    if (dataSlice.IsCompressed)
                     {
-                        // AES-192-OFB
-                        // Problem is c# doesnt have native support for it
-                        if (Crypto.DecryptAes((nuint)data.Ptr, 0x100, (nuint)data.Ptr, (nuint)KeyManager.Key.Ptr,
-                                (nuint)KeyManager.Iv.Ptr) != 0)
+                        if (!dataSlice.IsOodle)
                         {
-                            return null;
+                            ZStd.Decompress(compressedBuffer, ref outBuffer);
+                            outBuffer.Shift((int)dataSlice.DecompressedSize);
                         }
-                    }
-                }
-
-                //decompress slice
-                if (dataSlice.IsCompressed)
-                {
-                    if (!dataSlice.IsOodle)
-                    {
-                        Block<byte> decompressedData = new((int)dataSlice.DecompressedSize);
-                        ZStd.Decompress(data, ref decompressedData);
-
-                        data = decompressedData;
+                        else
+                        {
+                            Console.WriteLine("Oodle slice!");
+                        }
                     }
                     else
                     {
-                        Console.WriteLine("Oodle slice!");
+                        compressedBuffer.CopyTo(outBuffer);
+                        outBuffer.Shift((int)dataSlice.DecompressedSize);
                     }
                 }
-
-                //add slice to list
-                fileData.Add(data.ToArray());
+            }
+            else
+            {
+                Console.WriteLine($"{sdfName} does not exist, skipping slice.");
             }
         }
 
-        return CombineByteArray(fileData.ToArray());
-    }
-
-    public static byte[] CombineByteArray(params byte[][] arrays)
-    {
-        //
-        //from https://github.com/KillzXGaming/Switch-Toolbox/blob/master/Switch_Toolbox_Library/Util/Util.cs#L155
-        //
-        byte[] rv = new byte[arrays.Sum(a => a.Length)];
-        int offset = 0;
-        foreach (byte[] array in arrays)
-        {
-            Buffer.BlockCopy(array, 0, rv, offset, array.Length);
-            offset += array.Length;
-        }
-        return rv;
+        outBuffer.ResetShift();
+        return outBuffer;
     }
 }
