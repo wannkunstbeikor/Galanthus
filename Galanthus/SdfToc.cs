@@ -623,7 +623,6 @@ public class SdfToc : IDisposable
                     }
 
                     compressedBuffer.Dispose();
-                    stream.Dispose();
                 }
             }
             else
