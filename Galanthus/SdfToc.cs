@@ -621,6 +621,9 @@ public class SdfToc : IDisposable
                         compressedBuffer.CopyTo(outBuffer);
                         outBuffer.Shift((int)dataSlice.DecompressedSize);
                     }
+
+                    compressedBuffer.Dispose();
+                    stream.Dispose();
                 }
             }
             else
