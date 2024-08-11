@@ -140,7 +140,7 @@ public static class GameManager
             {
                 if (file.Name == filePath)
                 {
-                    data = m_toc.GetFileBytes(m_toc, file, dataDir);
+                    data = m_toc.GetFileBytes(file, dataDir);
                     break;
                 }
             }

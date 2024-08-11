@@ -520,7 +520,7 @@ public class SdfToc : IDisposable
         }
     }
 
-    public unsafe Block<Byte> GetFileBytes(SdfToc toc, File fileEntry, string dataDir)
+    public unsafe Block<Byte> GetFileBytes(File fileEntry, string dataDir)
     {
         int outBufferSize = 0;
         string sdfPath = null;
