@@ -208,7 +208,6 @@ public class SdfToc : IDisposable
 
         if (isEncrypted)
         {
-
             if (KeyManager.Key is null || KeyManager.Iv is null)
             {
                 return null;
