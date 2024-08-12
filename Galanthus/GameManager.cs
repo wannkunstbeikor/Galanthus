@@ -130,7 +130,7 @@ public static class GameManager
 
         return true;
     }
-    public static Byte[] TryGetFileBytes(string filePath, string inDirectory)
+    public static Block<byte> GetFileBytesFromPath(string filePath, string inDirectory)
     {
         string dataDir = Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data");
         Block<byte> data = null;
@@ -145,6 +145,6 @@ public static class GameManager
                 }
             }
         }
-        return data.ToArray();
+        return data;
     }
 }

@@ -567,10 +567,9 @@ public class SdfToc : IDisposable
             sdfPath = Path.Combine(dataDir, sdfName);
             if (System.IO.File.Exists(sdfPath))
             {
-                using (DataStream stream = BlockStream.FromFile(sdfPath))
+                using (DataStream stream = BlockStream.FromFile(sdfPath, dataSlice.Offset, (int)dataSlice.CompressedSize))
                 {
                     //read slice
-                    stream.Position = dataSlice.Offset;
                     Block<Byte> compressedBuffer = new((int)dataSlice.CompressedSize);
                     stream.ReadExactly(compressedBuffer);
 
@@ -608,7 +607,6 @@ public class SdfToc : IDisposable
                         if (!dataSlice.IsOodle)
                         {
                             ZStd.Decompress(compressedBuffer, ref outBuffer);
-                            outBuffer.Shift((int)dataSlice.DecompressedSize);
                         }
                         else
                         {
@@ -618,9 +616,9 @@ public class SdfToc : IDisposable
                     else
                     {
                         compressedBuffer.CopyTo(outBuffer);
-                        outBuffer.Shift((int)dataSlice.DecompressedSize);
                     }
 
+                    outBuffer.Shift((int)dataSlice.DecompressedSize);
                     compressedBuffer.Dispose();
                 }
             }

@@ -71,11 +71,6 @@ internal static class Program
         {
             Console.WriteLine("Failed to load game.");
         }
-        else
-        {
-            byte[] bytes = GameManager.TryGetFileBytes(@"moria/baked/art/ui/boot/rkb.dds", inGameDirectory.FullName);
-            File.WriteAllBytes(@"E:\Game-Dumps\MRKB-DumpTest\BASE\moria\baked\art\ui\boot\Galanthus--rkb.dds", bytes);
-        }
 
         KeyManager.Key?.Dispose();
         KeyManager.Iv?.Dispose();
