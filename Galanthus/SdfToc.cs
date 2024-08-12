@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
+using File = Galanthus.Structs.File;
 
 namespace Galanthus;
 
@@ -515,5 +517,118 @@ public class SdfToc : IDisposable
         {
             header.Dispose();
         }
+    }
+
+    public unsafe Block<Byte> GetFileBytes(File fileEntry, string dataDir)
+    {
+        int outBufferSize = 0;
+        string sdfPath = null;
+
+        //get final file size
+        foreach (DataSlice dataSlice in fileEntry.DataSlices)
+        {
+            if (fileEntry.DdsIndex != -1)
+            {
+                outBufferSize += m_ddsHeaders[fileEntry.DdsIndex].Size;
+            }
+
+            if (!TryGetDataFile(dataSlice, out string? sdfName))
+            {
+                Console.WriteLine($"Wrong index {dataSlice.Index}");
+                continue;
+            }
+
+            sdfPath = Path.Combine(dataDir, sdfName);
+            if (System.IO.File.Exists(sdfPath))
+            {
+                outBufferSize += (int)dataSlice.DecompressedSize;
+            }
+                
+        }
+        Block<Byte> outBuffer = new(outBufferSize);
+
+
+        //add dds header
+        if (fileEntry.DdsIndex != -1)
+        {
+            m_ddsHeaders[fileEntry.DdsIndex].CopyTo(outBuffer);
+            outBuffer.Shift(m_ddsHeaders[fileEntry.DdsIndex].Size);
+        }
+        
+        //read slices 
+        foreach (DataSlice dataSlice in fileEntry.DataSlices)
+        {
+            if (!TryGetDataFile(dataSlice, out string? sdfName))
+            {
+                Console.WriteLine($"Wrong index {dataSlice.Index}");
+                continue;
+            }
+
+            sdfPath = Path.Combine(dataDir, sdfName);
+            if (System.IO.File.Exists(sdfPath))
+            {
+                using (DataStream stream = BlockStream.FromFile(sdfPath, dataSlice.Offset, (int)dataSlice.CompressedSize))
+                {
+                    //read slice
+                    Block<Byte> compressedBuffer = new((int)dataSlice.CompressedSize);
+                    stream.ReadExactly(compressedBuffer);
+
+                    //decrypt slice
+                    if (dataSlice.IsEncrypted)
+                    {
+                        if (m_header.Version >= 0x29 && compressedBuffer.Size >= 8)
+                        {
+                            // first they use XTEA encryption, then they use des encryption
+                            XTEA((uint*)compressedBuffer.Ptr, 32);
+
+                            // DES-PCBC
+                            // Problem is c# doesnt have native support for it
+                            if (Crypto.DecryptDes((nuint)compressedBuffer.Ptr, (compressedBuffer.Size >> 3) << 3, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
+                                    (nuint)KeyManager.Iv.Ptr) != 0)
+                            {
+                                return null;
+                            }
+                        }
+                        else if (compressedBuffer.Size >= 0x100)
+                        {
+                            // AES-192-OFB
+                            // Problem is c# doesnt have native support for it
+                            if (Crypto.DecryptAes((nuint)compressedBuffer.Ptr, 0x100, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
+                                    (nuint)KeyManager.Iv.Ptr) != 0)
+                            {
+                                return null;
+                            }
+                        }
+                    }
+
+                    //decompress slice
+                    if (dataSlice.IsCompressed)
+                    {
+                        if (!dataSlice.IsOodle)
+                        {
+                            ZStd.Decompress(compressedBuffer, ref outBuffer);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Oodle slice!");
+                        }
+                    }
+                    else
+                    {
+                        compressedBuffer.CopyTo(outBuffer);
+                    }
+
+                    outBuffer.Shift((int)dataSlice.DecompressedSize);
+                    compressedBuffer.Dispose();
+                }
+            }
+            else
+            {
+                Console.WriteLine($"{sdfName} does not exist, skipping slice.");
+            }
+        }
+
+        outBuffer.ResetShift();
+        return outBuffer;
     }
 }

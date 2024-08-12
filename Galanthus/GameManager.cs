@@ -130,4 +130,21 @@ public static class GameManager
 
         return true;
     }
+    public static Block<byte> GetFileBytesFromPath(string filePath, string inDirectory)
+    {
+        string dataDir = Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data");
+        Block<byte> data = null;
+        if (filePath != null)
+        {
+            foreach (Structs.File file in m_toc.Files)
+            {
+                if (file.Name == filePath)
+                {
+                    data = m_toc.GetFileBytes(file, dataDir);
+                    break;
+                }
+            }
+        }
+        return data;
+    }
 }
