@@ -1,6 +1,6 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
-using Galanthus.Structs;
 using StreamUtils;
 
 namespace Galanthus;
@@ -10,8 +10,9 @@ public static class GameManager
     public static CompressionMethod CompressionMethod { get; set; }
     public static Platform Platform { get; set; }
     public static string? CodeName { get; private set; }
+    public static string? GameDirectory { get; private set; }
     public static char Separator { get; private set; } = '-';
-    private static SdfToc? m_toc;
+    private static SdfToc? s_toc;
 
     /// <summary>
     /// Loads Snowdrop game.
@@ -22,6 +23,8 @@ public static class GameManager
     /// <returns></returns>
     public static bool LoadGame(string inDirectory, Platform inPlatform, CompressionMethod inOverrideMethod = CompressionMethod.None)
     {
+        GameDirectory = inDirectory;
+
         // check if the path is valid
         if (!Directory.Exists(inDirectory))
         {
@@ -88,63 +91,67 @@ public static class GameManager
 
         // load main table of content
         using BlockStream stream = BlockStream.FromFile(Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data/sdf.sdftoc"));
-        m_toc = SdfToc.Read(stream);
-        if (m_toc is null)
+        s_toc = SdfToc.Read(stream);
+        if (s_toc is null)
         {
             return false;
         }
 
-        foreach (Structs.File file in m_toc.Files)
-        {
-            foreach (DataSlice slice in file.DataSlices)
-            {
+        HashSet<int> indices = new();
 
-                if (!m_toc.TryGetDataFile(slice, out string? path))
-                {
-                    Console.WriteLine($"Wrong index {slice.Index}");
-                    continue;
-                }
-
-                FileInfo f = new(Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data",
-                    path));
-
-                if (!f.Exists)
-                {
-                    Console.WriteLine($"Missing file {path}");
-                    continue;
-                }
-
-                if (slice.Offset >= f.Length)
-                {
-                    Console.WriteLine($"Invalid offset {slice.Offset} in {path} with length of {f.Length}");
-                    continue;
-                }
-
-                if (slice.Offset + slice.CompressedSize > f.Length)
-                {
-                    Console.WriteLine($"Slice exceeds file {path} by {slice.Offset + slice.CompressedSize - f.Length}");
-                    continue;
-                }
-            }
-        }
+        // foreach (Structs.File file in s_toc.Files)
+        // {
+        //     foreach (DataSlice slice in file.DataSlices)
+        //     {
+        //
+        //         if (!s_toc.TryGetDataFile(slice, out string? path))
+        //         {
+        //             Console.WriteLine($"Wrong index {slice.Index}");
+        //             continue;
+        //         }
+        //
+        //         FileInfo f = new(Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data",
+        //             path));
+        //
+        //         if (!f.Exists)
+        //         {
+        //             Console.WriteLine($"Missing file {path}");
+        //             indices.Add(slice.Index);
+        //             continue;
+        //         }
+        //
+        //         if (slice.Offset >= f.Length)
+        //         {
+        //             Console.WriteLine($"Invalid offset {slice.Offset} in {path} with length of {f.Length}");
+        //             continue;
+        //         }
+        //
+        //         if (slice.Offset + slice.CompressedSize > f.Length)
+        //         {
+        //             Console.WriteLine($"Slice exceeds file {path} by {slice.Offset + slice.CompressedSize - f.Length}");
+        //             continue;
+        //         }
+        //     }
+        // }
 
         return true;
     }
-    public static Block<byte> GetFileBytesFromPath(string filePath, string inDirectory)
+
+    public static string GetPath(string inName)
     {
-        string dataDir = Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data");
-        Block<byte> data = null;
-        if (filePath != null)
+        if (string.IsNullOrEmpty(GameDirectory) || string.IsNullOrEmpty(CodeName))
         {
-            foreach (Structs.File file in m_toc.Files)
-            {
-                if (file.Name == filePath)
-                {
-                    data = m_toc.GetFileBytes(file, dataDir);
-                    break;
-                }
-            }
+            return string.Empty;
         }
-        return data;
+        return Path.Combine(GameDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data", inName);
+    }
+
+    public static Block<byte>? GetAssetData(string inName)
+    {
+        if (s_toc?.TryGetAsset(inName, out Structs.Asset file) != true)
+        {
+            return null;
+        }
+        return s_toc.GetData(file);
     }
 }
