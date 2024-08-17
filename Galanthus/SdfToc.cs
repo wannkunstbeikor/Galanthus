@@ -375,11 +375,6 @@ public class SdfToc : IDisposable
                 outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
             }
 
-            if (!TryGetDataFile(dataSlice, out string? _))
-            {
-                continue;
-            }
-
             outBufferSize += (int)dataSlice.DecompressedSize;
 
         }
@@ -400,6 +395,7 @@ public class SdfToc : IDisposable
             {
                 continue;
             }
+            path = GameManager.GetPath(path);
 
             using (DataStream stream = BlockStream.FromFile(path, dataSlice.Offset, (int)dataSlice.CompressedSize))
             {
