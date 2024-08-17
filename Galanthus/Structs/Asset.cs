@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Galanthus.Structs;
 
-public struct File()
+public struct Asset()
 {
     public string Name = string.Empty;
     public uint Hash;

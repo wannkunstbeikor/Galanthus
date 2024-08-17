@@ -2,30 +2,29 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
+using System.Linq;
 using Galanthus.Structs;
 using Galanthus.Utils;
 using StreamUtils;
-using File = Galanthus.Structs.File;
 
 namespace Galanthus;
 
 public class SdfToc : IDisposable
 {
-    public IEnumerable<File> Files => m_files;
+    public IEnumerable<Asset> Assets => m_assets.Values;
 
     private TocHeader m_header;
     private List<Locale> m_locales;
     private List<Block<byte>> m_ddsHeaders;
-    private List<File> m_files;
+    private Dictionary<string, Asset> m_assets;
     private DataSliceIndexSettings m_settings;
 
-    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<File> inFiles, DataSliceIndexSettings inSettings)
+    public SdfToc(TocHeader inHeader, List<Locale> inLocales, List<Block<byte>> inDdsHeaders, List<Asset> inAssets, DataSliceIndexSettings inSettings)
     {
         m_header = inHeader;
         m_locales = inLocales;
         m_ddsHeaders = inDdsHeaders;
-        m_files = inFiles;
+        m_assets = inAssets.ToDictionary(f => f.Name);
         m_settings = inSettings;
     }
 
@@ -256,11 +255,16 @@ public class SdfToc : IDisposable
 
         // parse file table
         using BlockStream subStream = new(fileTable);
-        List<File> files = ParseFileTable(subStream, hasSign, header.Version);
+        List<Asset> assets = ParseAssetTable(subStream, hasSign, header.Version);
 
-        Console.WriteLine($"Got {files.Count} files.");
+        Console.WriteLine($"Got {assets.Count} assets.");
 
-        return new SdfToc(header, locales, ddsHeaders, files, settings);
+        return new SdfToc(header, locales, ddsHeaders, assets, settings);
+    }
+
+    public bool TryGetAsset(string inName, out Asset asset)
+    {
+        return m_assets.TryGetValue(inName, out asset);
     }
 
     public bool TryGetDataFile(DataSlice inSlice, [NotNullWhen(true)] out string? path)
@@ -335,6 +339,7 @@ public class SdfToc : IDisposable
         else if (inSlice.Index >= m_settings.StartIndexPartEDownloadOnDemand &&
                  inSlice.Index <= m_settings.EndIndexPartEDownloadOnDemand)
         {
+            // TODO: figure out how these work
             part = 'E';
         }
         else
@@ -357,14 +362,118 @@ public class SdfToc : IDisposable
         return true;
     }
 
-    private static List<File> ParseFileTable(DataStream inStream, bool isSigned, uint inVersion)
+
+    public unsafe Block<byte>? GetData(Asset inAsset)
     {
-        List<File> retVal = new();
+        int outBufferSize = 0;
+
+        // get final file size
+        foreach (DataSlice dataSlice in inAsset.DataSlices)
+        {
+            if (inAsset.DdsIndex != -1)
+            {
+                outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
+            }
+
+            if (!TryGetDataFile(dataSlice, out string? _))
+            {
+                continue;
+            }
+
+            outBufferSize += (int)dataSlice.DecompressedSize;
+
+        }
+        Block<byte> outBuffer = new(outBufferSize);
+
+
+        // add dds header
+        if (inAsset.DdsIndex != -1)
+        {
+            m_ddsHeaders[inAsset.DdsIndex].CopyTo(outBuffer);
+            outBuffer.Shift(m_ddsHeaders[inAsset.DdsIndex].Size);
+        }
+
+        // read slices
+        foreach (DataSlice dataSlice in inAsset.DataSlices)
+        {
+            if (!TryGetDataFile(dataSlice, out string? path))
+            {
+                continue;
+            }
+
+            using (DataStream stream = BlockStream.FromFile(path, dataSlice.Offset, (int)dataSlice.CompressedSize))
+            {
+                // read slice
+                Block<byte> compressedBuffer = new((int)dataSlice.CompressedSize);
+                stream.ReadExactly(compressedBuffer);
+
+                // decrypt slice
+                if (dataSlice.IsEncrypted)
+                {
+                    if (KeyManager.Key is null || KeyManager.Iv is null)
+                    {
+                        return null;
+                    }
+
+                    if (m_header.Version >= 0x29 && compressedBuffer.Size >= 8)
+                    {
+                        // first they use XTEA encryption, then they use des encryption
+                        XTEA((uint*)compressedBuffer.Ptr, 32);
+
+                        // DES-PCBC
+                        // Problem is c# doesnt have native support for it
+                        if (Crypto.DecryptDes((nuint)compressedBuffer.Ptr, (compressedBuffer.Size >> 3) << 3, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
+                                (nuint)KeyManager.Iv.Ptr) != 0)
+                        {
+                            return null;
+                        }
+                    }
+                    else if (compressedBuffer.Size >= 0x100)
+                    {
+                        // AES-192-OFB
+                        // Problem is c# doesnt have native support for it
+                        if (Crypto.DecryptAes((nuint)compressedBuffer.Ptr, 0x100, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
+                                (nuint)KeyManager.Iv.Ptr) != 0)
+                        {
+                            return null;
+                        }
+                    }
+                }
+
+                // decompress slice
+                if (dataSlice.IsCompressed)
+                {
+                    if (!dataSlice.IsOodle)
+                    {
+                        ZStd.Decompress(compressedBuffer, ref outBuffer);
+                    }
+                    else
+                    {
+                        Oodle.Decompress(compressedBuffer, ref outBuffer);
+                    }
+                }
+                else
+                {
+                    compressedBuffer.CopyTo(outBuffer);
+                }
+
+                outBuffer.Shift((int)dataSlice.DecompressedSize);
+                compressedBuffer.Dispose();
+            }
+        }
+
+        outBuffer.ResetShift();
+        return outBuffer;
+    }
+
+    private static List<Asset> ParseAssetTable(DataStream inStream, bool isSigned, uint inVersion)
+    {
+        List<Asset> retVal = new();
         ParseEntry(inStream, isSigned, string.Empty, retVal, inVersion);
         return retVal;
     }
 
-    private static void ParseEntry(DataStream inStream, bool isSigned, string name, List<File> files, uint inVersion)
+    private static void ParseEntry(DataStream inStream, bool isSigned, string name, List<Asset> files, uint inVersion)
     {
         char id = inStream.ReadChar();
 
@@ -409,7 +518,7 @@ public class SdfToc : IDisposable
         int unk = packedStuff >> 2;
         int ddsIndex = (int)inStream.ReadSizedInt(packedStuff & 3, -1);
 
-        File file = new()
+        Asset asset = new()
         {
             Name = name,
             Hash = hash,
@@ -470,7 +579,7 @@ public class SdfToc : IDisposable
                 sign = inStream.ReadInt32();
             }
 
-            file.DataSlices.Add(new DataSlice()
+            asset.DataSlices.Add(new DataSlice()
             {
                 DecompressedSize = decompressedSize,
                 CompressedSize = compressedSize,
@@ -485,7 +594,7 @@ public class SdfToc : IDisposable
             });
         }
 
-        files.Add(file);
+        files.Add(asset);
 
         if (flags != 0)
         {
@@ -517,118 +626,5 @@ public class SdfToc : IDisposable
         {
             header.Dispose();
         }
-    }
-
-    public unsafe Block<Byte> GetFileBytes(File fileEntry, string dataDir)
-    {
-        int outBufferSize = 0;
-        string sdfPath = null;
-
-        //get final file size
-        foreach (DataSlice dataSlice in fileEntry.DataSlices)
-        {
-            if (fileEntry.DdsIndex != -1)
-            {
-                outBufferSize += m_ddsHeaders[fileEntry.DdsIndex].Size;
-            }
-
-            if (!TryGetDataFile(dataSlice, out string? sdfName))
-            {
-                Console.WriteLine($"Wrong index {dataSlice.Index}");
-                continue;
-            }
-
-            sdfPath = Path.Combine(dataDir, sdfName);
-            if (System.IO.File.Exists(sdfPath))
-            {
-                outBufferSize += (int)dataSlice.DecompressedSize;
-            }
-                
-        }
-        Block<Byte> outBuffer = new(outBufferSize);
-
-
-        //add dds header
-        if (fileEntry.DdsIndex != -1)
-        {
-            m_ddsHeaders[fileEntry.DdsIndex].CopyTo(outBuffer);
-            outBuffer.Shift(m_ddsHeaders[fileEntry.DdsIndex].Size);
-        }
-        
-        //read slices 
-        foreach (DataSlice dataSlice in fileEntry.DataSlices)
-        {
-            if (!TryGetDataFile(dataSlice, out string? sdfName))
-            {
-                Console.WriteLine($"Wrong index {dataSlice.Index}");
-                continue;
-            }
-
-            sdfPath = Path.Combine(dataDir, sdfName);
-            if (System.IO.File.Exists(sdfPath))
-            {
-                using (DataStream stream = BlockStream.FromFile(sdfPath, dataSlice.Offset, (int)dataSlice.CompressedSize))
-                {
-                    //read slice
-                    Block<Byte> compressedBuffer = new((int)dataSlice.CompressedSize);
-                    stream.ReadExactly(compressedBuffer);
-
-                    //decrypt slice
-                    if (dataSlice.IsEncrypted)
-                    {
-                        if (m_header.Version >= 0x29 && compressedBuffer.Size >= 8)
-                        {
-                            // first they use XTEA encryption, then they use des encryption
-                            XTEA((uint*)compressedBuffer.Ptr, 32);
-
-                            // DES-PCBC
-                            // Problem is c# doesnt have native support for it
-                            if (Crypto.DecryptDes((nuint)compressedBuffer.Ptr, (compressedBuffer.Size >> 3) << 3, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
-                                    (nuint)KeyManager.Iv.Ptr) != 0)
-                            {
-                                return null;
-                            }
-                        }
-                        else if (compressedBuffer.Size >= 0x100)
-                        {
-                            // AES-192-OFB
-                            // Problem is c# doesnt have native support for it
-                            if (Crypto.DecryptAes((nuint)compressedBuffer.Ptr, 0x100, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
-                                    (nuint)KeyManager.Iv.Ptr) != 0)
-                            {
-                                return null;
-                            }
-                        }
-                    }
-
-                    //decompress slice
-                    if (dataSlice.IsCompressed)
-                    {
-                        if (!dataSlice.IsOodle)
-                        {
-                            ZStd.Decompress(compressedBuffer, ref outBuffer);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Oodle slice!");
-                        }
-                    }
-                    else
-                    {
-                        compressedBuffer.CopyTo(outBuffer);
-                    }
-
-                    outBuffer.Shift((int)dataSlice.DecompressedSize);
-                    compressedBuffer.Dispose();
-                }
-            }
-            else
-            {
-                Console.WriteLine($"{sdfName} does not exist, skipping slice.");
-            }
-        }
-
-        outBuffer.ResetShift();
-        return outBuffer;
     }
 }

@@ -49,6 +49,7 @@ public struct DataSliceIndexSettings
     private const uint c_mfSdfDataSliceStartIndexDlcPatch = 0x33C7C230; // MF_SDF_DATASLICE_START_INDEX_DLC_PATCH
     private const uint c_mfSdfDataSliceEndIndexDlcPatch = 0xB0BA2363; // MF_SDF_DATASLICE_END_INDEX_DLC_PATCH
 
+    // E
     private const uint c_mfSdfDataSliceStartIndexPartEDownloadOnDemand = 2186534504; // MF_SDF_DATASLICE_START_INDEX_PARTE_DOWNLOADONDEMAND
     private const uint c_mfSdfDataSliceEndIndexPartEDownloadOnDemand = 2456653752; // MF_SDF_DATASLICE_END_INDEX_PARTE_DOWNLOADONDEMAND
 
