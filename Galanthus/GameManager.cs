@@ -11,6 +11,7 @@ public static class GameManager
     public static Platform Platform { get; set; }
     public static string? CodeName { get; private set; }
     public static string? GameDirectory { get; private set; }
+    public static string? DataDirectory { get; private set; }
     public static char Separator { get; private set; } = '-';
     private static SdfToc? s_toc;
 
@@ -78,9 +79,9 @@ public static class GameManager
             }
         }
 
-        foreach (string path in Directory.EnumerateFiles(
-                     Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data"),
-                     "*.sdfdata", SearchOption.AllDirectories))
+        DataDirectory = Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data");
+
+        foreach (string path in Directory.EnumerateFiles(DataDirectory, "*.sdfdata", SearchOption.AllDirectories))
         {
             if (path.Contains('_'))
             {
@@ -90,7 +91,7 @@ public static class GameManager
         }
 
         // load main table of content
-        using BlockStream stream = BlockStream.FromFile(Path.Combine(inDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data/sdf.sdftoc"));
+        using BlockStream stream = BlockStream.FromFile(Path.Combine(DataDirectory, "sdf.sdftoc"));
         s_toc = SdfToc.Read(stream);
         if (s_toc is null)
         {
@@ -139,11 +140,11 @@ public static class GameManager
 
     public static string GetPath(string inName)
     {
-        if (string.IsNullOrEmpty(GameDirectory) || string.IsNullOrEmpty(CodeName))
+        if (string.IsNullOrEmpty(DataDirectory) || string.IsNullOrEmpty(CodeName))
         {
             return string.Empty;
         }
-        return Path.Combine(GameDirectory, CodeName, "sdf", Platform.ToString().ToLower(), "data", inName);
+        return Path.Combine(DataDirectory, inName);
     }
 
     public static Block<byte>? GetAssetData(string inName)

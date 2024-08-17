@@ -352,11 +352,11 @@ public class SdfToc : IDisposable
         char s = GameManager.Separator;
         if (locale is null)
         {
-            path = $"sdf{s}{part}{s}{inSlice.Index:D4}.sdfdata";
+            path = GameManager.GetPath($"sdf{s}{part}{s}{inSlice.Index:D4}.sdfdata");
         }
         else
         {
-            path = $"sdf{s}{part}{s}{inSlice.Index:D4}{s}{locale}.sdfdata";
+            path = GameManager.GetPath($"sdf{s}{part}{s}{inSlice.Index:D4}{s}{locale}.sdfdata");
         }
 
         return true;
@@ -449,7 +449,10 @@ public class SdfToc : IDisposable
                     }
                     else
                     {
-                        Oodle.Decompress(compressedBuffer, ref outBuffer);
+                        Block<byte> tempBuffer = new(outBuffer.Ptr, (int)dataSlice.DecompressedSize);
+                        tempBuffer.MarkMemoryAsFragile();
+                        Oodle.Decompress(compressedBuffer, ref tempBuffer);
+                        tempBuffer.Dispose();
                     }
                 }
                 else
