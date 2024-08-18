@@ -368,13 +368,13 @@ public class SdfToc : IDisposable
         int outBufferSize = 0;
 
         // get final file size
+        if (inAsset.DdsIndex != -1)
+        {
+            outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
+        }
+
         foreach (DataSlice dataSlice in inAsset.DataSlices)
         {
-            if (inAsset.DdsIndex != -1)
-            {
-                outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
-            }
-
             if (!TryGetDataFile(dataSlice, out string? _))
             {
                 continue;
@@ -384,7 +384,6 @@ public class SdfToc : IDisposable
 
         }
         Block<byte> outBuffer = new(outBufferSize);
-
 
         // add dds header
         if (inAsset.DdsIndex != -1)
