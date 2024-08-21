@@ -443,18 +443,17 @@ public class SdfToc : IDisposable
                 {
                     int pageSize = 0x10000;
                     int decompressedOffset = 0;
-                    int compressedOffset = 0;
 
                     // iterate through pages
-                    for (int i = 0; i < dataSlice.PageSizes.Count; i++)
+                    for (int i = 0; i < dataSlice.PageSizes!.Count; i++)
                     {
                         int decompressedSize = (int)Math.Min(dataSlice.DecompressedSize - decompressedOffset, pageSize);
 
                         if (dataSlice.PageSizes[i] == 0 || decompressedSize == dataSlice.PageSizes[i])
                         {
                             // uncompressed page
-                            compressedOffset = decompressedSize;
                             compressedBuffer.CopyTo(outBuffer, decompressedSize);
+                            compressedBuffer.Shift(decompressedSize);
                         }
                         else
                         {
@@ -462,7 +461,6 @@ public class SdfToc : IDisposable
                             // set up temp buffer with only the page data
                             Block<byte> tempBuffer = new(compressedBuffer.Ptr, dataSlice.PageSizes[i]);
                             tempBuffer.MarkMemoryAsFragile();
-                            compressedOffset = dataSlice.PageSizes[i];
 
                             if (!dataSlice.IsOodle)
                             {
@@ -477,10 +475,10 @@ public class SdfToc : IDisposable
                                 oodleOutBuffer.Dispose();
                             }
                             tempBuffer.Dispose();
+                            compressedBuffer.Shift(dataSlice.PageSizes[i]);
                         }
 
                         decompressedOffset += decompressedSize;
-                        compressedBuffer.Shift(compressedOffset);
                         outBuffer.Shift(decompressedSize);
                     }
                 }
