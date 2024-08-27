@@ -49,7 +49,7 @@ public class SdfToc : IDisposable
         }
 
         // test which versions
-        if (header.Version > 0x29)
+        if (header.Version > 0x2A)
         {
             return null;
         }

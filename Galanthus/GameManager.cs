@@ -70,6 +70,7 @@ public static class GameManager
                 case "ibex":
                 case "rogue":
                 case "camel":
+                case "helix":
                     CompressionMethod = CompressionMethod.ZLib;
                     break;
                 default:
