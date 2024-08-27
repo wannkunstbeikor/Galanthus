@@ -365,16 +365,15 @@ public class SdfToc : IDisposable
 
     public unsafe Block<byte>? GetData(Asset inAsset)
     {
-        int outBufferSize = 0;
-
         // get final file size
+        int outBufferSize = 0;
+        if (inAsset.DdsIndex != -1)
+        {
+            outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
+        }
+
         foreach (DataSlice dataSlice in inAsset.DataSlices)
         {
-            if (inAsset.DdsIndex != -1)
-            {
-                outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
-            }
-
             if (!TryGetDataFile(dataSlice, out string? _))
             {
                 continue;
@@ -385,8 +384,7 @@ public class SdfToc : IDisposable
         }
         Block<byte> outBuffer = new(outBufferSize);
 
-
-        // add dds header
+        // add dds header data
         if (inAsset.DdsIndex != -1)
         {
             m_ddsHeaders[inAsset.DdsIndex].CopyTo(outBuffer);
@@ -403,7 +401,7 @@ public class SdfToc : IDisposable
 
             using (DataStream stream = BlockStream.FromFile(path, dataSlice.Offset, (int)dataSlice.CompressedSize))
             {
-                // read slice
+                // read whole slice into buffer
                 Block<byte> compressedBuffer = new((int)dataSlice.CompressedSize);
                 stream.ReadExactly(compressedBuffer);
 
@@ -440,27 +438,56 @@ public class SdfToc : IDisposable
                     }
                 }
 
-                // decompress slice
+                // decompress slice if needed
                 if (dataSlice.IsCompressed)
                 {
-                    if (!dataSlice.IsOodle)
+                    int pageSize = 0x10000;
+                    int decompressedOffset = 0;
+
+                    // iterate through pages
+                    for (int i = 0; i < dataSlice.PageSizes!.Count; i++)
                     {
-                        ZStd.Decompress(compressedBuffer, ref outBuffer);
-                    }
-                    else
-                    {
-                        Block<byte> tempBuffer = new(outBuffer.Ptr, (int)dataSlice.DecompressedSize);
-                        tempBuffer.MarkMemoryAsFragile();
-                        Oodle.Decompress(compressedBuffer, ref tempBuffer);
-                        tempBuffer.Dispose();
+                        int decompressedSize = (int)Math.Min(dataSlice.DecompressedSize - decompressedOffset, pageSize);
+
+                        if (dataSlice.PageSizes[i] == 0 || decompressedSize == dataSlice.PageSizes[i])
+                        {
+                            // uncompressed page
+                            compressedBuffer.CopyTo(outBuffer, decompressedSize);
+                            compressedBuffer.Shift(decompressedSize);
+                        }
+                        else
+                        {
+                            // compressed page
+                            // set up temp buffer with only the page data
+                            Block<byte> tempBuffer = new(compressedBuffer.Ptr, dataSlice.PageSizes[i]);
+                            tempBuffer.MarkMemoryAsFragile();
+
+                            if (!dataSlice.IsOodle)
+                            {
+                                ZStd.Decompress(tempBuffer, ref outBuffer);
+                            }
+                            else
+                            {
+                                // oodle is annoying and won't work unless the output buffer is exactly as big as the decompressed data
+                                Block<byte> oodleOutBuffer = new(outBuffer.Ptr, decompressedSize);
+                                oodleOutBuffer.MarkMemoryAsFragile();
+                                Oodle.Decompress(tempBuffer, ref oodleOutBuffer);
+                                oodleOutBuffer.Dispose();
+                            }
+                            tempBuffer.Dispose();
+                            compressedBuffer.Shift(dataSlice.PageSizes[i]);
+                        }
+
+                        decompressedOffset += decompressedSize;
+                        outBuffer.Shift(decompressedSize);
                     }
                 }
                 else
                 {
-                    compressedBuffer.CopyTo(outBuffer);
+                    compressedBuffer.CopyTo(outBuffer, (int)dataSlice.DecompressedSize);
+                    outBuffer.Shift((int)dataSlice.DecompressedSize);
                 }
 
-                outBuffer.Shift((int)dataSlice.DecompressedSize);
                 compressedBuffer.Dispose();
             }
         }
