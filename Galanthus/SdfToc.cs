@@ -561,7 +561,8 @@ public class SdfToc : IDisposable
         {
             byte sizesAndFlags = inStream.ReadByte();
             bool isCompressed = (sizesAndFlags >> 5 & 1) != 0;
-            bool isEncrypted = ((sizesAndFlags >> 6) & 1) != 0;
+            bool isEncrypted = (sizesAndFlags >> (inVersion >= 0x29 ? 7 : 6) & 1) != 0;
+            bool noPageSize = inVersion >= 0x29 && (sizesAndFlags >> 6 & 1) != 0;
 
             long decompressedSize = inStream.ReadSizedInt((sizesAndFlags & 3) + 1);
             byte unk1 = 0;
@@ -590,12 +591,20 @@ public class SdfToc : IDisposable
             {
                 long pageCount = (decompressedSize + 0xffff) >> 16;
                 pageSizes = new List<int>((int)pageCount);
-                if (pageCount > 1 && (inVersion < 0x29 || !isEncrypted))
+                if (pageCount > 1 && !noPageSize)
                 {
+                    int sum = 0;
                     for (int page = 0; page < pageCount; page++)
                     {
-                        pageSizes.Add(inStream.ReadUInt16());
+                        int size = inStream.ReadUInt16();
+                        pageSizes.Add(size);
+                        if (size == 0)
+                        {
+                            size = 0x10000;
+                        }
+                        sum += size;
                     }
+                    Debug.Assert(sum == compressedSize, "Invalid page sizes");
                 }
                 else
                 {
@@ -609,12 +618,12 @@ public class SdfToc : IDisposable
                 sign = inStream.ReadInt32();
             }
 
-            asset.DataSlices.Add(new DataSlice()
+            asset.DataSlices.Add(new DataSlice
             {
                 DecompressedSize = decompressedSize,
                 CompressedSize = compressedSize,
                 IsCompressed = isCompressed,
-                IsOodle = (sizesAndFlags >> 7 & 1) != 0,
+                IsOodle = inVersion >= 0x29 || (sizesAndFlags >> 7 & 1) != 0,
                 IsEncrypted = isEncrypted,
                 Offset = offset,
                 Index = index,
