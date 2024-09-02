@@ -342,14 +342,7 @@ public class SdfToc : IDisposable
             path = GameManager.GetPath($"sdf{s}{part}{s}{inSlice.Index:D4}{s}{locale}.sdfdata");
         }
 
-        if (File.Exists(path))
-        {
-            return true;
-        }
-        else
-        {
-            return false;
-        }
+        return File.Exists(path);
     }
 
     public unsafe Block<byte>? GetData(Asset inAsset)
@@ -412,7 +405,7 @@ public class SdfToc : IDisposable
                     for (int i = 0; i < dataSlice.PageSizes!.Count; i++)
                     {
                         int decompressedSize = (int)Math.Min(dataSlice.DecompressedSize - decompressedOffset, pageSize);
-                        if (dataSlice.PageSizes!.Count == 1)
+                        if (dataSlice.PageSizes.Count == 1)
                         {
                             decompressedSize = (int)dataSlice.DecompressedSize;
                         }
@@ -430,7 +423,7 @@ public class SdfToc : IDisposable
                                 if (!DecryptBlock(m_header.Version, tempBuffer, ref outBuffer))
                                 {
                                     Console.WriteLine("Page failed to decrypt!");
-                                    break;
+                                    return null;
                                 }
                             }
                             else
@@ -454,7 +447,7 @@ public class SdfToc : IDisposable
                                 if (!DecryptBlock(m_header.Version, tempBuffer, ref tempBuffer))
                                 {
                                     Console.WriteLine("Page failed to decrypt!");
-                                    break;
+                                    return null;
                                 }
                             }
 
@@ -497,7 +490,7 @@ public class SdfToc : IDisposable
                         if (!DecryptBlock(m_header.Version, compressedBuffer, ref outBuffer))
                         {
                             Console.WriteLine("Slice failed to decrypt!");
-                            break;
+                            return null;
                         }
                     }
                     else
@@ -664,14 +657,14 @@ public class SdfToc : IDisposable
         }
     }
 
-    public static unsafe bool DecryptBlock(uint tocVersion, Block<Byte> inBuf, ref Block<Byte> outBuf)
+    public static unsafe bool DecryptBlock(uint inVersion, Block<Byte> inBuf, ref Block<Byte> outBuf)
     {
         if (KeyManager.Key is null || KeyManager.Iv is null)
         {
             return false;
         }
 
-        if (tocVersion >= 0x29 && inBuf.Size >= 8)
+        if (inVersion >= 0x29 && inBuf.Size >= 8)
         {
             // first they use XTEA encryption, then they use des encryption
             XTEA((uint*)inBuf.Ptr, 32);
