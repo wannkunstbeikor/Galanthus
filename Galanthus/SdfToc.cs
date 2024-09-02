@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using Galanthus.Structs;
 using Galanthus.Utils;
@@ -11,7 +12,7 @@ namespace Galanthus;
 
 public class SdfToc : IDisposable
 {
-    public IEnumerable<Asset> Assets => m_assets.Values;
+    public List<string> Assets => m_assets.Keys.ToList();
 
     private TocHeader m_header;
     private List<Locale> m_locales;
@@ -207,34 +208,16 @@ public class SdfToc : IDisposable
 
         if (isEncrypted)
         {
-            if (KeyManager.Key is null || KeyManager.Iv is null)
+            Block<byte> tempBuffer = new(compressedFileTable.Ptr, compressedFileTable.Size);
+            tempBuffer.MarkMemoryAsFragile();
+
+            if (!DecryptBlock(header.Version, compressedFileTable, ref tempBuffer))
             {
+                Console.WriteLine($"Toc failed to decrypt!");
                 return null;
             }
 
-            if (header.Version >= 0x29 && compressedFileTable.Size >= 8)
-            {
-                // first they use XTEA encryption, then they use des encryption
-                XTEA((uint*)compressedFileTable.Ptr, 32);
-
-                // DES-PCBC
-                // Problem is c# doesnt have native support for it
-                if (Crypto.DecryptDes((nuint)compressedFileTable.Ptr, (compressedFileTable.Size >> 3) << 3, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
-                        (nuint)KeyManager.Iv.Ptr) != 0)
-                {
-                    return null;
-                }
-            }
-            else if (compressedFileTable.Size >= 0x100)
-            {
-                // AES-192-OFB
-                // Problem is c# doesnt have native support for it
-                if (Crypto.DecryptAes((nuint)compressedFileTable.Ptr, 0x100, (nuint)compressedFileTable.Ptr, (nuint)KeyManager.Key.Ptr,
-                        (nuint)KeyManager.Iv.Ptr) != 0)
-                {
-                    return null;
-                }
-            }
+            tempBuffer.Dispose();
         }
 
         Block<byte> fileTable = new(header.FileTableDecompressedSize);
@@ -359,17 +342,18 @@ public class SdfToc : IDisposable
             path = GameManager.GetPath($"sdf{s}{part}{s}{inSlice.Index:D4}{s}{locale}.sdfdata");
         }
 
-        return true;
+        return File.Exists(path);
     }
-
 
     public unsafe Block<byte>? GetData(Asset inAsset)
     {
         // get final file size
         int outBufferSize = 0;
+        int ddsHeaderSize = 0;
         if (inAsset.DdsIndex != -1)
         {
             outBufferSize += m_ddsHeaders[inAsset.DdsIndex].Size;
+            ddsHeaderSize = m_ddsHeaders[inAsset.DdsIndex].Size;
         }
 
         foreach (DataSlice dataSlice in inAsset.DataSlices)
@@ -380,8 +364,14 @@ public class SdfToc : IDisposable
             }
 
             outBufferSize += (int)dataSlice.DecompressedSize;
-
         }
+
+        // probably a localised file that isn't installed so just return null before we do anything
+        if (outBufferSize - ddsHeaderSize <= 0)
+        {
+            return null;
+        }
+
         Block<byte> outBuffer = new(outBufferSize);
 
         // add dds header data
@@ -405,39 +395,6 @@ public class SdfToc : IDisposable
                 Block<byte> compressedBuffer = new((int)dataSlice.CompressedSize);
                 stream.ReadExactly(compressedBuffer);
 
-                // decrypt slice
-                if (dataSlice.IsEncrypted)
-                {
-                    if (KeyManager.Key is null || KeyManager.Iv is null)
-                    {
-                        return null;
-                    }
-
-                    if (m_header.Version >= 0x29 && compressedBuffer.Size >= 8)
-                    {
-                        // first they use XTEA encryption, then they use des encryption
-                        XTEA((uint*)compressedBuffer.Ptr, 32);
-
-                        // DES-PCBC
-                        // Problem is c# doesnt have native support for it
-                        if (Crypto.DecryptDes((nuint)compressedBuffer.Ptr, (compressedBuffer.Size >> 3) << 3, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
-                                (nuint)KeyManager.Iv.Ptr) != 0)
-                        {
-                            return null;
-                        }
-                    }
-                    else if (compressedBuffer.Size >= 0x100)
-                    {
-                        // AES-192-OFB
-                        // Problem is c# doesnt have native support for it
-                        if (Crypto.DecryptAes((nuint)compressedBuffer.Ptr, 0x100, (nuint)compressedBuffer.Ptr, (nuint)KeyManager.Key.Ptr,
-                                (nuint)KeyManager.Iv.Ptr) != 0)
-                        {
-                            return null;
-                        }
-                    }
-                }
-
                 // decompress slice if needed
                 if (dataSlice.IsCompressed)
                 {
@@ -448,11 +405,33 @@ public class SdfToc : IDisposable
                     for (int i = 0; i < dataSlice.PageSizes!.Count; i++)
                     {
                         int decompressedSize = (int)Math.Min(dataSlice.DecompressedSize - decompressedOffset, pageSize);
+                        if (dataSlice.PageSizes.Count == 1)
+                        {
+                            decompressedSize = (int)dataSlice.DecompressedSize;
+                        }
 
                         if (dataSlice.PageSizes[i] == 0 || decompressedSize == dataSlice.PageSizes[i])
                         {
                             // uncompressed page
-                            compressedBuffer.CopyTo(outBuffer, decompressedSize);
+                            // set up temp buffer with only the page data
+                            Block<byte> tempBuffer = new(compressedBuffer.Ptr, decompressedSize);
+                            tempBuffer.MarkMemoryAsFragile();
+
+                            // decrypt page
+                            if (dataSlice.IsEncrypted)
+                            {
+                                if (!DecryptBlock(m_header.Version, tempBuffer, ref outBuffer))
+                                {
+                                    Console.WriteLine("Page failed to decrypt!");
+                                    return null;
+                                }
+                            }
+                            else
+                            {
+                                tempBuffer.CopyTo(outBuffer, decompressedSize);
+                            }
+
+                            tempBuffer.Dispose();
                             compressedBuffer.Shift(decompressedSize);
                         }
                         else
@@ -462,9 +441,30 @@ public class SdfToc : IDisposable
                             Block<byte> tempBuffer = new(compressedBuffer.Ptr, dataSlice.PageSizes[i]);
                             tempBuffer.MarkMemoryAsFragile();
 
+                            // decrypt page
+                            if (dataSlice.IsEncrypted)
+                            {
+                                if (!DecryptBlock(m_header.Version, tempBuffer, ref tempBuffer))
+                                {
+                                    Console.WriteLine("Page failed to decrypt!");
+                                    return null;
+                                }
+                            }
+
                             if (!dataSlice.IsOodle)
                             {
-                                ZStd.Decompress(tempBuffer, ref outBuffer);
+                                switch (GameManager.CompressionMethod)
+                                {
+                                    case CompressionMethod.ZLib:
+                                        ZLib.Decompress(tempBuffer, ref outBuffer);
+                                        break;
+                                    case CompressionMethod.ZStd:
+                                        ZStd.Decompress(tempBuffer, ref outBuffer);
+                                        break;
+                                    case CompressionMethod.Lz4:
+                                        Lz4.Decompress(tempBuffer, ref outBuffer);
+                                        break;
+                                }
                             }
                             else
                             {
@@ -484,7 +484,20 @@ public class SdfToc : IDisposable
                 }
                 else
                 {
-                    compressedBuffer.CopyTo(outBuffer, (int)dataSlice.DecompressedSize);
+                    // decrypt whole slice
+                    if (dataSlice.IsEncrypted)
+                    {
+                        if (!DecryptBlock(m_header.Version, compressedBuffer, ref outBuffer))
+                        {
+                            Console.WriteLine("Slice failed to decrypt!");
+                            return null;
+                        }
+                    }
+                    else
+                    {
+                        compressedBuffer.CopyTo(outBuffer, (int)dataSlice.DecompressedSize);
+                    }
+
                     outBuffer.Shift((int)dataSlice.DecompressedSize);
                 }
 
@@ -642,6 +655,40 @@ public class SdfToc : IDisposable
             byte count2 = inStream.ReadByte();
             inStream.Position += 2 * count2;
         }
+    }
+
+    public static unsafe bool DecryptBlock(uint inVersion, Block<Byte> inBuf, ref Block<Byte> outBuf)
+    {
+        if (KeyManager.Key is null || KeyManager.Iv is null)
+        {
+            return false;
+        }
+
+        if (inVersion >= 0x29 && inBuf.Size >= 8)
+        {
+            // first they use XTEA encryption, then they use des encryption
+            XTEA((uint*)inBuf.Ptr, 32);
+
+            // DES-PCBC
+            // Problem is c# doesnt have native support for it
+            if (Crypto.DecryptDes((nuint)inBuf.Ptr, (inBuf.Size >> 3) << 3, (nuint)outBuf.Ptr, (nuint)KeyManager.Key.Ptr,
+                    (nuint)KeyManager.Iv.Ptr) != 0)
+            {
+                return false;
+            }
+        }
+        else if (inBuf.Size >= 0x100)
+        {
+            // AES-192-OFB
+            // Problem is c# doesnt have native support for it
+            if (Crypto.DecryptAes((nuint)inBuf.Ptr, 0x100, (nuint)outBuf.Ptr, (nuint)KeyManager.Key.Ptr,
+                    (nuint)KeyManager.Iv.Ptr) != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static unsafe void XTEA(uint* v, uint numRounds)

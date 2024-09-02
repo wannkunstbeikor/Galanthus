@@ -156,4 +156,13 @@ public static class GameManager
         }
         return s_toc.GetData(file);
     }
+
+    public static List<string>? GetAssetListing()
+    {
+        if (s_toc?.Assets == null)
+        {
+            return null;
+        }
+        return s_toc.Assets;
+    }
 }
