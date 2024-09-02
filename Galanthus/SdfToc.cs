@@ -367,7 +367,7 @@ public class SdfToc : IDisposable
         }
 
         // probably a localised file that isn't installed so just return null before we do anything
-        if (outBufferSize - ddsHeaderSize <= 0 && inAsset.DataSlices[0].DecompressedSize != 0)
+        if (outBufferSize - ddsHeaderSize <= 0)
         {
             return null;
         }
